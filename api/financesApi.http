@@ -1,0 +1,9 @@
+@financesApi_HostAddress = http://localhost:5153
+
+GET {{financesApi_HostAddress}}/status/health
+Accept: application/json
+
+###
+
+GET {{financesApi_HostAddress}}/uploads/getAccounts
+Accept: application/json
