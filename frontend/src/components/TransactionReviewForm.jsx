@@ -46,6 +46,8 @@ export default function TransactionReviewForm() {
                 transactionCount: 0,
             });
         }
+        // Legacy compatibility component; the routed Finova table owns new transaction fetching.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedAccountId]);
 
     const fetchTransactions = async (accountId) => {
