@@ -6,6 +6,7 @@ import {
     Sun, X,
 } from 'lucide-react';
 import FinovaLogo from './FinovaLogo';
+import RouteErrorBoundary from './RouteErrorBoundary';
 import { useTheme } from '../contexts/ThemeContext';
 import { searchFinova, useDashboard } from '../lib/queries';
 
@@ -83,7 +84,7 @@ export default function AppShell() {
                         <button className="avatar avatar-button" onClick={() => navigate('/settings')} aria-label="Open household settings">MH</button>
                     </div>
                 </header>
-                <div className="page-content"><Outlet /></div>
+                <div className="page-content"><RouteErrorBoundary><Outlet /></RouteErrorBoundary></div>
             </main>
 
             <nav className="bottom-nav" aria-label="Mobile navigation">
