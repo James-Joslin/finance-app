@@ -1,0 +1,95 @@
+name: finance-app-dev
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-finances_db}
+      POSTGRES_USER: ${POSTGRES_USER:-finances_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finances_dev_password}
+    ports:
+      - "${POSTGRES_HOST_PORT:-55432}:5432"
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  migrations:
+    build:
+      context: ./migrations
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-finances_db}
+      POSTGRES_USER: ${POSTGRES_USER:-finances_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finances_dev_password}
+      POSTGRES_SSL_MODE: ${POSTGRES_SSL_MODE:-Disable}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["upgrade", "head"]
+    volumes:
+      - ./migrations:/migrations
+    restart: "no"
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile.dev
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_HTTP_PORTS: 8080
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-finances_db}
+      POSTGRES_USER: ${POSTGRES_USER:-finances_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finances_dev_password}
+      POSTGRES_SSL_MODE: ${POSTGRES_SSL_MODE:-Disable}
+    ports:
+      - "${API_PORT:-5153}:8080"
+    volumes:
+      - ./api:/src
+      - api_nuget_cache:/root/.nuget/packages
+    depends_on:
+      migrations:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/status/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      API_PROXY_TARGET: http://api:8080
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--output-document=-", "http://127.0.0.1:5173/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+volumes:
+  postgres_dev_data:
+  api_nuget_cache:
+  frontend_node_modules:

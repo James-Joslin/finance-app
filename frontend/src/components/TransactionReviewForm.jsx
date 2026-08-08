@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import axios from '../api/api';
+import { buildReportTransactions } from '../utils/reportTransactions';
 import { useAccounts } from '../contexts/useAccounts'; // Update this import path based on your solution
 
 export default function TransactionReviewForm() {
@@ -7,7 +8,7 @@ export default function TransactionReviewForm() {
     const [transactions, setTransactions] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-    
+
     // Filtering state
     const [filters, setFilters] = useState({
         startDate: '',
@@ -15,19 +16,19 @@ export default function TransactionReviewForm() {
         minAmount: '',
         maxAmount: '',
         searchText: '',
-        transactionType: 'all' // 'all', 'credits', 'debits'
+        transactionType: 'all', // 'all', 'credits', 'debits'
     });
     const [isFilterOpen, setIsFilterOpen] = useState(false);
-    
+
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
     const [itemsPerPage, setItemsPerPage] = useState(10);
-    
+
     const [summary, setSummary] = useState({
         totalDebits: 0,
         totalCredits: 0,
         balance: 0,
-        transactionCount: 0
+        transactionCount: 0,
     });
 
     // Fetch transactions when selectedAccountId changes
@@ -42,7 +43,7 @@ export default function TransactionReviewForm() {
                 totalDebits: 0,
                 totalCredits: 0,
                 balance: 0,
-                transactionCount: 0
+                transactionCount: 0,
             });
         }
     }, [selectedAccountId]);
@@ -50,62 +51,28 @@ export default function TransactionReviewForm() {
     const fetchTransactions = async (accountId) => {
         setLoading(true);
         setError(null);
-        
+
         try {
             const res = await axios.post('/reports/getAccountTable', {
-                accountId: parseInt(accountId)
+                accountId: parseInt(accountId),
             });
-            
+
             // Extract headers and rows from the response
             const responseHeaders = res.data.Headers[0] || [];
             const responseRows = res.data.Rows || [];
-            
-            
-            // First, transform rows into transaction objects
-            const formattedTransactions = responseRows.map((row, index) => {
-                // Map based on the header positions
-                const transaction = {};
-                responseHeaders.forEach((header, headerIndex) => {
-                    transaction[header] = row[headerIndex];
-                });
-                
-                // Add computed fields
-                const amount = parseFloat(row[2]) || 0; // amount is at index 2
-                
-                return {
-                    ...transaction,
-                    id: `${accountId}-${index}`,
-                    amount: amount,
-                    isDebit: amount < 0,
-                    displayAmount: Math.abs(amount),
-                    // Parse date for filtering and sorting
-                    dateObj: new Date(row[1])
-                };
-            });
-            
-            // Calculate running balance in chronological order (oldest to newest)
-            // First sort by date ascending for balance calculation
-            const chronologicalTransactions = [...formattedTransactions].sort((a, b) => 
-                a.dateObj - b.dateObj
+
+            const sortedTransactions = buildReportTransactions(
+                responseHeaders,
+                responseRows
             );
-            
-            let runningBalance = 0;
-            chronologicalTransactions.forEach(transaction => {
-                runningBalance += transaction.amount;
-                transaction.runningBalance = runningBalance;
-            });
-            
-            // Now sort by date descending (newest first) for display
-            const sortedTransactions = formattedTransactions.sort((a, b) => 
-                b.dateObj - a.dateObj
-            );
-            
+
             setTransactions(sortedTransactions);
             calculateSummary(sortedTransactions);
-            
         } catch (err) {
             console.error('Error fetching transactions:', err);
-            setError(err.response?.data?.error || 'Failed to fetch transactions');
+            setError(
+                err.response?.data?.error || 'Failed to fetch transactions'
+            );
             setTransactions([]);
         } finally {
             setLoading(false);
@@ -114,73 +81,63 @@ export default function TransactionReviewForm() {
 
     // Filter transactions based on current filters
     const filteredTransactions = useMemo(() => {
-        return transactions.filter(transaction => {
+        return transactions.filter((transaction) => {
             // Date range filter
             if (filters.startDate) {
-                const startDate = new Date(filters.startDate);
+                const startDate = new Date(filters.startDate + 'T00:00:00');
                 if (transaction.dateObj < startDate) return false;
             }
             if (filters.endDate) {
-                const endDate = new Date(filters.endDate);
-                endDate.setHours(23, 59, 59, 999); // Include the entire end date
+                const endDate = new Date(filters.endDate + 'T23:59:59.999');
                 if (transaction.dateObj > endDate) return false;
             }
-            
+
             // Amount range filter
-            if (filters.minAmount !== '' && Math.abs(transaction.amount) < parseFloat(filters.minAmount)) {
+            if (
+                filters.minAmount !== '' &&
+                Math.abs(transaction.amount) < parseFloat(filters.minAmount)
+            ) {
                 return false;
             }
-            if (filters.maxAmount !== '' && Math.abs(transaction.amount) > parseFloat(filters.maxAmount)) {
+            if (
+                filters.maxAmount !== '' &&
+                Math.abs(transaction.amount) > parseFloat(filters.maxAmount)
+            ) {
                 return false;
             }
-            
+
             // Transaction type filter
-            if (filters.transactionType === 'credits' && transaction.amount < 0) return false;
-            if (filters.transactionType === 'debits' && transaction.amount > 0) return false;
-            
+            if (filters.transactionType === 'credits' && transaction.amount < 0)
+                return false;
+            if (filters.transactionType === 'debits' && transaction.amount > 0)
+                return false;
+
             // Search text filter (searches in payee and memo)
             if (filters.searchText) {
                 const searchLower = filters.searchText.toLowerCase();
                 const payee = (transaction.payee || '').toLowerCase();
                 const memo = (transaction.memo || '').toLowerCase();
-                if (!payee.includes(searchLower) && !memo.includes(searchLower)) {
+                if (
+                    !payee.includes(searchLower) &&
+                    !memo.includes(searchLower)
+                ) {
                     return false;
                 }
             }
-            
+
             return true;
         });
     }, [transactions, filters]);
-
-    // When filtering, we need to recalculate running balance for the filtered set
-    const filteredWithRunningBalance = useMemo(() => {
-        // Sort filtered transactions chronologically for balance calculation
-        const chronological = [...filteredTransactions].sort((a, b) => a.dateObj - b.dateObj);
-        
-        let runningBalance = 0;
-        chronological.forEach(transaction => {
-            runningBalance += transaction.amount;
-            transaction.filteredRunningBalance = runningBalance;
-        });
-        
-        // Return in display order (newest first) with the updated balance
-        return filteredTransactions.map(transaction => ({
-            ...transaction,
-            displayBalance: transaction.filteredRunningBalance !== undefined 
-                ? transaction.filteredRunningBalance 
-                : transaction.runningBalance
-        }));
-    }, [filteredTransactions]);
 
     // Paginated transactions
     const paginatedTransactions = useMemo(() => {
         const startIndex = (currentPage - 1) * itemsPerPage;
         const endIndex = startIndex + itemsPerPage;
-        return filteredWithRunningBalance.slice(startIndex, endIndex);
-    }, [filteredWithRunningBalance, currentPage, itemsPerPage]);
+        return filteredTransactions.slice(startIndex, endIndex);
+    }, [filteredTransactions, currentPage, itemsPerPage]);
 
     // Calculate total pages
-    const totalPages = Math.ceil(filteredWithRunningBalance.length / itemsPerPage);
+    const totalPages = Math.ceil(filteredTransactions.length / itemsPerPage);
 
     // Update summary when filtered transactions change
     useEffect(() => {
@@ -193,15 +150,18 @@ export default function TransactionReviewForm() {
     }, [filters]);
 
     const calculateSummary = (transactionList) => {
-        const summary = transactionList.reduce((acc, transaction) => {
-            if (transaction.amount < 0) {
-                acc.totalDebits += Math.abs(transaction.amount);
-            } else {
-                acc.totalCredits += transaction.amount;
-            }
-            acc.transactionCount++;
-            return acc;
-        }, { totalDebits: 0, totalCredits: 0, transactionCount: 0 });
+        const summary = transactionList.reduce(
+            (acc, transaction) => {
+                if (transaction.amount < 0) {
+                    acc.totalDebits += Math.abs(transaction.amount);
+                } else {
+                    acc.totalCredits += transaction.amount;
+                }
+                acc.transactionCount++;
+                return acc;
+            },
+            { totalDebits: 0, totalCredits: 0, transactionCount: 0 }
+        );
 
         summary.balance = summary.totalCredits - summary.totalDebits;
         setSummary(summary);
@@ -214,7 +174,7 @@ export default function TransactionReviewForm() {
             minAmount: '',
             maxAmount: '',
             searchText: '',
-            transactionType: 'all'
+            transactionType: 'all',
         });
     };
 
@@ -222,7 +182,7 @@ export default function TransactionReviewForm() {
         return new Intl.NumberFormat('en-GB', {
             style: 'currency',
             currency: 'GBP',
-            minimumFractionDigits: 2
+            minimumFractionDigits: 2,
         }).format(amount);
     };
 
@@ -232,12 +192,12 @@ export default function TransactionReviewForm() {
         return date.toLocaleDateString('en-US', {
             year: 'numeric',
             month: 'short',
-            day: 'numeric'
+            day: 'numeric',
         });
     };
 
     const getSelectedAccountName = () => {
-        const account = accounts.find(acc => acc.id === selectedAccountId);
+        const account = accounts.find((acc) => acc.id === selectedAccountId);
         return account ? account.name : '';
     };
 
@@ -251,11 +211,11 @@ export default function TransactionReviewForm() {
         const maxButtons = 5;
         let start = Math.max(1, currentPage - Math.floor(maxButtons / 2));
         let end = Math.min(totalPages, start + maxButtons - 1);
-        
+
         if (end - start < maxButtons - 1) {
             start = Math.max(1, end - maxButtons + 1);
         }
-        
+
         for (let i = start; i <= end; i++) {
             range.push(i);
         }
@@ -266,8 +226,12 @@ export default function TransactionReviewForm() {
     if (!selectedAccountId) {
         return (
             <div className="p-4 bg-white rounded-lg shadow">
-                <h2 className="text-xl font-bold mb-4 text-gray-800">Transaction Review</h2>
-                <p className="text-gray-500">Please select an account to view transactions</p>
+                <h2 className="text-xl font-bold mb-4 text-gray-800">
+                    Transaction Review
+                </h2>
+                <p className="text-gray-500">
+                    Please select an account to view transactions
+                </p>
             </div>
         );
     }
@@ -281,7 +245,9 @@ export default function TransactionReviewForm() {
                 </h2>
                 <div className="flex justify-center items-center py-8">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                    <span className="ml-3 text-gray-600">Loading transactions...</span>
+                    <span className="ml-3 text-gray-600">
+                        Loading transactions...
+                    </span>
                 </div>
             </div>
         );
@@ -297,7 +263,7 @@ export default function TransactionReviewForm() {
                 <div className="bg-red-50 border border-red-300 text-red-700 p-3 rounded">
                     Error: {error}
                 </div>
-                <button 
+                <button
                     onClick={() => fetchTransactions(selectedAccountId)}
                     className="mt-3 bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
                 >
@@ -314,18 +280,23 @@ export default function TransactionReviewForm() {
                     Transaction Review - {getSelectedAccountName()}
                 </h2>
                 <div className="flex gap-2">
-                    <button 
+                    <button
                         onClick={() => setIsFilterOpen(!isFilterOpen)}
                         className={`px-3 py-1 rounded text-sm ${
-                            isFilterOpen || Object.values(filters).some(v => v !== '' && v !== 'all')
+                            isFilterOpen ||
+                            Object.values(filters).some(
+                                (v) => v !== '' && v !== 'all'
+                            )
                                 ? 'bg-blue-600 text-white'
                                 : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
                         }`}
                     >
                         {isFilterOpen ? 'Hide Filters' : 'Show Filters'}
-                        {Object.values(filters).some(v => v !== '' && v !== 'all') && ' (Active)'}
+                        {Object.values(filters).some(
+                            (v) => v !== '' && v !== 'all'
+                        ) && ' (Active)'}
                     </button>
-                    <button 
+                    <button
                         onClick={() => fetchTransactions(selectedAccountId)}
                         className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-1 rounded text-sm"
                     >
@@ -340,30 +311,51 @@ export default function TransactionReviewForm() {
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         {/* Date Range */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Start Date
+                            </label>
                             <input
                                 type="date"
                                 value={filters.startDate}
-                                onChange={(e) => setFilters({...filters, startDate: e.target.value})}
+                                onChange={(e) =>
+                                    setFilters({
+                                        ...filters,
+                                        startDate: e.target.value,
+                                    })
+                                }
                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                End Date
+                            </label>
                             <input
                                 type="date"
                                 value={filters.endDate}
-                                onChange={(e) => setFilters({...filters, endDate: e.target.value})}
+                                onChange={(e) =>
+                                    setFilters({
+                                        ...filters,
+                                        endDate: e.target.value,
+                                    })
+                                }
                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                             />
                         </div>
-                        
+
                         {/* Transaction Type */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Type
+                            </label>
                             <select
                                 value={filters.transactionType}
-                                onChange={(e) => setFilters({...filters, transactionType: e.target.value})}
+                                onChange={(e) =>
+                                    setFilters({
+                                        ...filters,
+                                        transactionType: e.target.value,
+                                    })
+                                }
                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                             >
                                 <option value="all">All Transactions</option>
@@ -371,44 +363,65 @@ export default function TransactionReviewForm() {
                                 <option value="debits">Debits Only</option>
                             </select>
                         </div>
-                        
+
                         {/* Amount Range */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Min Amount</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Min Amount
+                            </label>
                             <input
                                 type="number"
                                 step="0.01"
                                 value={filters.minAmount}
-                                onChange={(e) => setFilters({...filters, minAmount: e.target.value})}
+                                onChange={(e) =>
+                                    setFilters({
+                                        ...filters,
+                                        minAmount: e.target.value,
+                                    })
+                                }
                                 placeholder="0.00"
                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                             />
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Max Amount</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Max Amount
+                            </label>
                             <input
                                 type="number"
                                 step="0.01"
                                 value={filters.maxAmount}
-                                onChange={(e) => setFilters({...filters, maxAmount: e.target.value})}
+                                onChange={(e) =>
+                                    setFilters({
+                                        ...filters,
+                                        maxAmount: e.target.value,
+                                    })
+                                }
                                 placeholder="0.00"
                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                             />
                         </div>
-                        
+
                         {/* Search */}
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Search</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Search
+                            </label>
                             <input
                                 type="text"
                                 value={filters.searchText}
-                                onChange={(e) => setFilters({...filters, searchText: e.target.value})}
+                                onChange={(e) =>
+                                    setFilters({
+                                        ...filters,
+                                        searchText: e.target.value,
+                                    })
+                                }
                                 placeholder="Search payee or memo..."
                                 className="w-full border border-gray-300 rounded px-2 py-1 text-sm"
                             />
                         </div>
                     </div>
-                    
+
                     <div className="mt-3 flex justify-end">
                         <button
                             onClick={clearFilters}
@@ -419,41 +432,68 @@ export default function TransactionReviewForm() {
                     </div>
                 </div>
             )}
-            
+
             {/* Summary Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
                 <div className="bg-blue-50 p-3 rounded-lg">
-                    <p className="text-sm text-blue-600 font-medium">Total Transactions</p>
-                    <p className="text-2xl font-bold text-blue-800">{summary.transactionCount}</p>
-                    {(filters.startDate || filters.endDate || filters.minAmount || filters.maxAmount || 
-                    filters.searchText || filters.transactionType !== 'all') && (
+                    <p className="text-sm text-blue-600 font-medium">
+                        Total Transactions
+                    </p>
+                    <p className="text-2xl font-bold text-blue-800">
+                        {summary.transactionCount}
+                    </p>
+                    {(filters.startDate ||
+                        filters.endDate ||
+                        filters.minAmount ||
+                        filters.maxAmount ||
+                        filters.searchText ||
+                        filters.transactionType !== 'all') && (
                         <p className="text-xs text-blue-600 mt-1">Filtered</p>
                     )}
                 </div>
                 <div className="bg-green-50 p-3 rounded-lg">
-                    <p className="text-sm text-green-600 font-medium">Total Credits</p>
-                    <p className="text-2xl font-bold text-green-800">{formatCurrency(summary.totalCredits)}</p>
+                    <p className="text-sm text-green-600 font-medium">
+                        Total Credits
+                    </p>
+                    <p className="text-2xl font-bold text-green-800">
+                        {formatCurrency(summary.totalCredits)}
+                    </p>
                 </div>
                 <div className="bg-red-50 p-3 rounded-lg">
-                    <p className="text-sm text-red-600 font-medium">Total Debits</p>
-                    <p className="text-2xl font-bold text-red-800">{formatCurrency(summary.totalDebits)}</p>
+                    <p className="text-sm text-red-600 font-medium">
+                        Total Debits
+                    </p>
+                    <p className="text-2xl font-bold text-red-800">
+                        {formatCurrency(summary.totalDebits)}
+                    </p>
                 </div>
                 <div className="bg-purple-50 p-3 rounded-lg">
-                    <p className="text-sm text-purple-600 font-medium">Net Balance</p>
-                    <p className={`text-2xl font-bold ${summary.balance >= 0 ? 'text-green-800' : 'text-red-800'}`}>
+                    <p className="text-sm text-purple-600 font-medium">
+                        Net Balance
+                    </p>
+                    <p
+                        className={`text-2xl font-bold ${summary.balance >= 0 ? 'text-green-800' : 'text-red-800'}`}
+                    >
                         {formatCurrency(summary.balance)}
                     </p>
                 </div>
             </div>
 
             {/* Pagination Controls - Top */}
-            {filteredWithRunningBalance.length > itemsPerPage && (
+            {filteredTransactions.length > itemsPerPage && (
                 <div className="mb-4 flex justify-between items-center">
                     <div className="text-sm text-gray-600">
-                        Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, filteredWithRunningBalance.length)} of {filteredWithRunningBalance.length} transactions
+                        Showing {(currentPage - 1) * itemsPerPage + 1} to{' '}
+                        {Math.min(
+                            currentPage * itemsPerPage,
+                            filteredTransactions.length
+                        )}{' '}
+                        of {filteredTransactions.length} transactions
                     </div>
                     <div className="flex items-center gap-2">
-                        <label className="text-sm text-gray-600">Per page:</label>
+                        <label className="text-sm text-gray-600">
+                            Per page:
+                        </label>
                         <select
                             value={itemsPerPage}
                             onChange={(e) => {
@@ -496,25 +536,51 @@ export default function TransactionReviewForm() {
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                             {paginatedTransactions.map((transaction) => (
-                                <tr key={transaction.id} className="hover:bg-gray-50">
+                                <tr
+                                    key={transaction.id}
+                                    className="hover:bg-gray-50"
+                                >
                                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                        {formatDate(transaction.transaction_date)}
+                                        {formatDate(
+                                            transaction.transaction_date
+                                        )}
                                     </td>
                                     <td className="px-4 py-3 text-sm text-gray-900">
-                                        {transaction.payee || <span className="text-gray-400 italic">No payee</span>}
+                                        {transaction.payee || (
+                                            <span className="text-gray-400 italic">
+                                                No payee
+                                            </span>
+                                        )}
                                     </td>
                                     <td className="px-4 py-3 text-sm text-gray-500">
-                                        {transaction.memo || <span className="text-gray-400 italic">No memo</span>}
+                                        {transaction.memo || (
+                                            <span className="text-gray-400 italic">
+                                                No memo
+                                            </span>
+                                        )}
                                     </td>
-                                    <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
-                                        transaction.isDebit ? 'text-red-600' : 'text-green-600'
-                                    }`}>
-                                        {transaction.isDebit ? '-' : '+'}{formatCurrency(transaction.displayAmount)}
+                                    <td
+                                        className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
+                                            transaction.isDebit
+                                                ? 'text-red-600'
+                                                : 'text-green-600'
+                                        }`}
+                                    >
+                                        {transaction.isDebit ? '-' : '+'}
+                                        {formatCurrency(
+                                            transaction.displayAmount
+                                        )}
                                     </td>
-                                    <td className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
-                                        transaction.displayBalance >= 0 ? 'text-gray-900' : 'text-red-600'
-                                    }`}>
-                                        {formatCurrency(transaction.displayBalance)}
+                                    <td
+                                        className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
+                                            transaction.runningBalance >= 0
+                                                ? 'text-gray-900'
+                                                : 'text-red-600'
+                                        }`}
+                                    >
+                                        {formatCurrency(
+                                            transaction.runningBalance
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -523,11 +589,14 @@ export default function TransactionReviewForm() {
                 </div>
             ) : (
                 <div className="text-center py-8 text-gray-500">
-                    {(filters.startDate || filters.endDate || filters.minAmount || filters.maxAmount || 
-                    filters.searchText || filters.transactionType !== 'all')
+                    {filters.startDate ||
+                    filters.endDate ||
+                    filters.minAmount ||
+                    filters.maxAmount ||
+                    filters.searchText ||
+                    filters.transactionType !== 'all'
                         ? 'No transactions match the current filters'
-                        : 'No transactions found for this account'
-                    }
+                        : 'No transactions found for this account'}
                 </div>
             )}
 
@@ -548,8 +617,8 @@ export default function TransactionReviewForm() {
                     >
                         Previous
                     </button>
-                    
-                    {getPaginationRange().map(page => (
+
+                    {getPaginationRange().map((page) => (
                         <button
                             key={page}
                             onClick={() => goToPage(page)}
@@ -562,7 +631,7 @@ export default function TransactionReviewForm() {
                             {page}
                         </button>
                     ))}
-                    
+
                     <button
                         onClick={() => goToPage(currentPage + 1)}
                         disabled={currentPage === totalPages}

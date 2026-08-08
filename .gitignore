@@ -1,0 +1,36 @@
+# Environment and secrets
+.env
+.env.*
+!.env.dev.example
+!.env.prod.example
+
+# .NET
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+
+# Node
+node_modules/
+dist/
+dist-ssr/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+
+# Test and patch artifacts
+TestResults/
+coverage/
+*.orig
+*.rej
