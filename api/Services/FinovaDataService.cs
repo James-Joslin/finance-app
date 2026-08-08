@@ -1,0 +1,793 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using financesApi.models;
+using financesApi.utilities;
+using Npgsql;
+
+namespace financesApi.services;
+
+public static class FinovaDataService
+{
+    private static readonly string[] AccountTypes = ["current", "savings", "credit", "cash", "investment"];
+    private static readonly string[] Frequencies = ["weekly", "fortnightly", "monthly", "quarterly", "yearly"];
+
+    public static async Task<HouseholdSettingsDto> GetSettingsAsync()
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT household_name, currency_code, locale, timezone FROM household_settings WHERE id = 1", connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) return new("Matthews Household", "GBP", "en-GB", "Europe/London");
+        return new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3));
+    }
+
+    public static async Task<HouseholdSettingsDto> UpdateSettingsAsync(UpdateHouseholdSettingsRequest request)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            UPDATE household_settings SET household_name = @name, currency_code = @currency,
+                locale = @locale, timezone = @timezone, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("name", request.HouseholdName.Trim());
+        command.Parameters.AddWithValue("currency", request.CurrencyCode.Trim().ToUpperInvariant());
+        command.Parameters.AddWithValue("locale", request.Locale.Trim());
+        command.Parameters.AddWithValue("timezone", request.Timezone.Trim());
+        await command.ExecuteNonQueryAsync();
+        return await GetSettingsAsync();
+    }
+
+    public static async Task<IReadOnlyList<AccountDto>> GetAccountsAsync(bool includeArchived = false)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT a.id, a.name, concat_ws(' ', p.first_name, p.last_name), coalesce(a.is_shared, false),
+                a.account_type, a.institution, a.last_four, coalesce(sum(t.amount), 0),
+                a.safe_zone_amount, a.include_in_safe_to_spend, a.is_archived
+            FROM accounts a
+            LEFT JOIN people p ON p.id = a.owner_id
+            LEFT JOIN transactions t ON t.account_id = a.id
+            WHERE (@include_archived OR NOT a.is_archived)
+            GROUP BY a.id, p.first_name, p.last_name
+            ORDER BY a.is_archived, a.name, a.id
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("include_archived", includeArchived);
+        await using var reader = await command.ExecuteReaderAsync();
+        var accounts = new List<AccountDto>();
+        while (await reader.ReadAsync()) accounts.Add(ReadAccount(reader));
+        return accounts;
+    }
+
+    public static async Task<AccountDto> CreateAccountAsync(CreateAccountRequest request)
+    {
+        ValidateAccount(request.AccountType, request.SafeZoneAmount, request.Name);
+        var accountId = 0;
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            const string personSql = """
+                INSERT INTO people (first_name, last_name)
+                VALUES (@first, @last)
+                ON CONFLICT DO NOTHING;
+                SELECT id FROM people WHERE lower(first_name) = lower(@first) AND lower(last_name) = lower(@last)
+                ORDER BY id LIMIT 1;
+                """;
+            await using var personCommand = new NpgsqlCommand(personSql, connection, transaction);
+            personCommand.Parameters.AddWithValue("first", request.FirstName.Trim());
+            personCommand.Parameters.AddWithValue("last", request.LastName.Trim());
+            var personId = Convert.ToInt32(await personCommand.ExecuteScalarAsync());
+
+            const string accountSql = """
+                INSERT INTO accounts (name, owner_id, is_shared, account_type, institution, last_four,
+                    safe_zone_amount, include_in_safe_to_spend)
+                VALUES (@name, @owner, @shared, @type, @institution, @last_four, @buffer, @include)
+                RETURNING id
+                """;
+            await using var accountCommand = new NpgsqlCommand(accountSql, connection, transaction);
+            accountCommand.Parameters.AddWithValue("name", request.Name.Trim());
+            accountCommand.Parameters.AddWithValue("owner", personId);
+            accountCommand.Parameters.AddWithValue("shared", request.IsShared);
+            accountCommand.Parameters.AddWithValue("type", request.AccountType);
+            accountCommand.Parameters.AddWithValue("institution", (object?)Clean(request.Institution) ?? DBNull.Value);
+            accountCommand.Parameters.AddWithValue("last_four", (object?)Clean(request.LastFour) ?? DBNull.Value);
+            accountCommand.Parameters.AddWithValue("buffer", request.SafeZoneAmount);
+            accountCommand.Parameters.AddWithValue("include", request.IncludeInSafeToSpend);
+            accountId = Convert.ToInt32(await accountCommand.ExecuteScalarAsync());
+
+            const string openingSql = """
+                INSERT INTO transactions (account_id, transaction_date, amount, payee, memo, fitid,
+                    transaction_type, source_file_type, category_id)
+                VALUES (@account, @date, @amount, 'Opening balance', 'Opening balance', @fitid,
+                    'Initial Deposit', 'MANUAL', (SELECT id FROM categories WHERE name = 'Transfers'))
+                """;
+            await using var openingCommand = new NpgsqlCommand(openingSql, connection, transaction);
+            openingCommand.Parameters.AddWithValue("account", accountId);
+            openingCommand.Parameters.AddWithValue("date", request.OpeningDate.ToDateTime(TimeOnly.MinValue));
+            openingCommand.Parameters.AddWithValue("amount", request.OpeningBalance);
+            openingCommand.Parameters.AddWithValue("fitid", $"opening-{accountId}");
+            await openingCommand.ExecuteNonQueryAsync();
+        });
+        return (await GetAccountsAsync(true)).Single(a => a.Id == accountId);
+    }
+
+    public static async Task<AccountDto?> UpdateAccountAsync(int id, UpdateAccountRequest request)
+    {
+        ValidateAccount(request.AccountType, request.SafeZoneAmount, request.Name);
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            UPDATE accounts SET name = @name, is_shared = @shared, account_type = @type,
+                institution = @institution, last_four = @last_four, safe_zone_amount = @buffer,
+                include_in_safe_to_spend = @include, is_archived = @archived
+            WHERE id = @id
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("shared", request.IsShared);
+        command.Parameters.AddWithValue("type", request.AccountType);
+        command.Parameters.AddWithValue("institution", (object?)Clean(request.Institution) ?? DBNull.Value);
+        command.Parameters.AddWithValue("last_four", (object?)Clean(request.LastFour) ?? DBNull.Value);
+        command.Parameters.AddWithValue("buffer", request.SafeZoneAmount);
+        command.Parameters.AddWithValue("include", request.IncludeInSafeToSpend);
+        command.Parameters.AddWithValue("archived", request.IsArchived);
+        if (await command.ExecuteNonQueryAsync() == 0) return null;
+        return (await GetAccountsAsync(true)).Single(a => a.Id == id);
+    }
+
+    public static async Task<IReadOnlyList<CategoryDto>> GetCategoriesAsync()
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = "SELECT id, name, kind, icon_key, color_key, is_system FROM categories WHERE NOT is_archived ORDER BY kind, name";
+        await using var command = new NpgsqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        var rows = new List<CategoryDto>();
+        while (await reader.ReadAsync()) rows.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5)));
+        return rows;
+    }
+
+    public static async Task<CategoryDto> CreateCategoryAsync(CategoryDto request)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            INSERT INTO categories (name, kind, icon_key, color_key) VALUES (@name, @kind, @icon, @color)
+            RETURNING id, name, kind, icon_key, color_key, is_system
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("kind", request.Kind);
+        command.Parameters.AddWithValue("icon", request.IconKey);
+        command.Parameters.AddWithValue("color", request.ColorKey);
+        await using var reader = await command.ExecuteReaderAsync();
+        await reader.ReadAsync();
+        return new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5));
+    }
+
+    public static async Task<TransactionPageDto> GetTransactionsAsync(
+        int? accountId, int? categoryId, string? search, string type, DateOnly? startDate, DateOnly? endDate, int page, int pageSize)
+    {
+        page = Math.Max(1, page);
+        pageSize = Math.Clamp(pageSize, 1, 10000);
+        var filters = new List<string> { "NOT a.is_archived" };
+        if (accountId.HasValue) filters.Add("tx.account_id = @account_id");
+        if (categoryId.HasValue) filters.Add("tx.category_id = @category_id");
+        if (!string.IsNullOrWhiteSpace(search)) filters.Add("(tx.payee ILIKE @search OR tx.memo ILIKE @search OR a.name ILIKE @search)");
+        if (type == "income") filters.Add("tx.amount > 0 AND NOT tx.is_transfer");
+        if (type == "spending") filters.Add("tx.amount < 0 AND NOT tx.is_transfer");
+        if (type == "transfer") filters.Add("tx.is_transfer");
+        if (startDate.HasValue) filters.Add("tx.transaction_date >= @start_date");
+        if (endDate.HasValue) filters.Add("tx.transaction_date < @end_date + interval '1 day'");
+        var where = string.Join(" AND ", filters);
+        var cte = """
+            WITH tx AS (
+                SELECT t.*, sum(t.amount) OVER (PARTITION BY t.account_id ORDER BY t.transaction_date, t.id) AS running_balance
+                FROM transactions t
+            )
+            """;
+        var countSql = $"{cte} SELECT count(*) FROM tx JOIN accounts a ON a.id = tx.account_id WHERE {where}";
+        var dataSql = $"""
+            {cte}
+            SELECT tx.id, tx.account_id, a.name, tx.transaction_date, tx.amount, tx.payee, tx.memo,
+                tx.category_id, coalesce(c.name, 'Uncategorised'), tx.status, tx.is_transfer,
+                tx.source_file_type, tx.running_balance
+            FROM tx JOIN accounts a ON a.id = tx.account_id
+            LEFT JOIN categories c ON c.id = tx.category_id
+            WHERE {where}
+            ORDER BY tx.transaction_date DESC, tx.id DESC
+            LIMIT @limit OFFSET @offset
+            """;
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        var total = 0;
+        await using (var countCommand = new NpgsqlCommand(countSql, connection))
+        {
+            AddTransactionFilters(countCommand, accountId, categoryId, search, startDate, endDate);
+            total = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
+        }
+        var items = new List<TransactionDtoV2>();
+        await using (var command = new NpgsqlCommand(dataSql, connection))
+        {
+            AddTransactionFilters(command, accountId, categoryId, search, startDate, endDate);
+            command.Parameters.AddWithValue("limit", pageSize);
+            command.Parameters.AddWithValue("offset", (page - 1) * pageSize);
+            await using var reader = await command.ExecuteReaderAsync();
+            while (await reader.ReadAsync()) items.Add(ReadTransaction(reader));
+        }
+        return new(items, page, pageSize, total, (int)Math.Ceiling(total / (double)pageSize));
+    }
+
+    public static async Task<bool> UpdateTransactionCategoryAsync(int id, UpdateTransactionCategoryRequest request)
+    {
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            const string updateSql = """
+                UPDATE transactions SET category_id = @category,
+                    is_transfer = EXISTS (SELECT 1 FROM categories WHERE id = @category AND kind = 'transfer')
+                WHERE id = @id
+                """;
+            await using var update = new NpgsqlCommand(updateSql, connection, transaction);
+            update.Parameters.AddWithValue("category", request.CategoryId);
+            update.Parameters.AddWithValue("id", id);
+            if (await update.ExecuteNonQueryAsync() == 0) throw new KeyNotFoundException();
+            if (request.SaveRule)
+            {
+                const string ruleSql = """
+                    INSERT INTO transaction_rules (match_text, category_id)
+                    SELECT lower(trim(coalesce(payee, memo))), @category FROM transactions WHERE id = @id
+                    """;
+                await using var rule = new NpgsqlCommand(ruleSql, connection, transaction);
+                rule.Parameters.AddWithValue("category", request.CategoryId);
+                rule.Parameters.AddWithValue("id", id);
+                await rule.ExecuteNonQueryAsync();
+            }
+        });
+        return true;
+    }
+
+    public static async Task<IReadOnlyList<RecurringItemDto>> GetRecurringItemsAsync(bool activeOnly = true)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT r.id, r.name, r.kind, r.account_id, a.name, r.category_id, c.name, r.amount,
+                r.frequency, r.next_date, r.source, r.is_active
+            FROM recurring_items r JOIN accounts a ON a.id = r.account_id
+            LEFT JOIN categories c ON c.id = r.category_id
+            WHERE (@active_only = false OR r.is_active) AND NOT a.is_archived
+            ORDER BY r.next_date, r.name
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("active_only", activeOnly);
+        await using var reader = await command.ExecuteReaderAsync();
+        var rows = new List<RecurringItemDto>();
+        while (await reader.ReadAsync()) rows.Add(ReadRecurring(reader));
+        return rows;
+    }
+
+    public static async Task<RecurringItemDto> SaveRecurringItemAsync(int? id, SaveRecurringItemRequest request)
+    {
+        ValidateRecurring(request);
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        var sql = id.HasValue
+            ? @"UPDATE recurring_items SET name=@name, kind=@kind, account_id=@account, category_id=@category,
+                amount=@amount, frequency=@frequency, next_date=@date, source=@source, is_active=@active
+                WHERE id=@id RETURNING id"
+            : @"INSERT INTO recurring_items (name, kind, account_id, category_id, amount, frequency, next_date, source, is_active)
+                VALUES (@name, @kind, @account, @category, @amount, @frequency, @date, @source, @active) RETURNING id";
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("kind", request.Kind);
+        command.Parameters.AddWithValue("account", request.AccountId);
+        command.Parameters.AddWithValue("category", (object?)request.CategoryId ?? DBNull.Value);
+        command.Parameters.AddWithValue("amount", Math.Abs(request.Amount));
+        command.Parameters.AddWithValue("frequency", request.Frequency);
+        command.Parameters.AddWithValue("date", request.NextDate.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("source", request.Source);
+        command.Parameters.AddWithValue("active", request.IsActive);
+        if (id.HasValue) command.Parameters.AddWithValue("id", id.Value);
+        var savedId = Convert.ToInt32(await command.ExecuteScalarAsync());
+        return (await GetRecurringItemsAsync(false)).Single(r => r.Id == savedId);
+    }
+
+    public static async Task<bool> DeleteRecurringItemAsync(int id) =>
+        await PostgreSqlQuerier.ExecuteNonQueryAsync("DELETE FROM recurring_items WHERE id=@id", new() { ["id"] = id }) > 0;
+
+    public static async Task<IReadOnlyList<AccountSafetyDto>> GetAccountSafetyAsync()
+    {
+        var accounts = await GetAccountsAsync();
+        var recurring = await GetRecurringItemsAsync();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var results = new List<AccountSafetyDto>();
+        foreach (var account in accounts)
+        {
+            var accountItems = recurring.Where(r => r.AccountId == account.Id).ToList();
+            var nextIncome = accountItems.Where(r => r.Kind == "income")
+                .Select(r => NormalizeNextDate(r.NextDate, r.Frequency, today))
+                .OrderBy(d => d).Select(d => (DateOnly?)d).FirstOrDefault();
+            var horizon = nextIncome?.AddDays(-1) ?? today.AddDays(30);
+            var bills = accountItems.Where(r => r.Kind == "bill")
+                .Sum(r => SumOccurrences(r.Amount, NormalizeNextDate(r.NextDate, r.Frequency, today), r.Frequency, horizon));
+            var calculated = FinanceMath.CalculateSafety(account.Balance, account.SafeZoneAmount, bills);
+            results.Add(new(account.Id, account.Name, account.Balance, account.SafeZoneAmount, bills, horizon,
+                calculated.SafeToSpend, calculated.Shortfall));
+        }
+        return results;
+    }
+
+    public static async Task<GoalSummaryDto> GetGoalsAsync(bool includeArchived = false)
+    {
+        var safety = (await GetAccountSafetyAsync()).ToDictionary(x => x.AccountId, x => x);
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT g.id, g.name, g.description, g.target_amount, g.target_date, g.account_id, a.name,
+                g.priority_order, g.icon_key, g.color_key, g.image_id, g.status
+            FROM savings_goals g JOIN accounts a ON a.id = g.account_id
+            WHERE (@include_archived OR g.status <> 'archived')
+            ORDER BY g.priority_order, g.id
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("include_archived", includeArchived);
+        await using var reader = await command.ExecuteReaderAsync();
+        var rawGoals = new List<GoalRow>();
+        while (await reader.ReadAsync())
+        {
+            rawGoals.Add(new(
+                reader.GetInt32(0), reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2),
+                reader.GetDecimal(3), reader.IsDBNull(4) ? null : DateOnly.FromDateTime(reader.GetDateTime(4)),
+                reader.GetInt32(5), reader.GetString(6), reader.GetInt32(7), reader.GetString(8), reader.GetString(9),
+                reader.IsDBNull(10) ? null : reader.GetInt32(10), reader.GetString(11)));
+        }
+        var pools = safety.ToDictionary(kv => kv.Key, kv => Math.Max(0, kv.Value.Balance - kv.Value.BufferAmount - kv.Value.UpcomingBills));
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var goals = new List<GoalDto>();
+        foreach (var goal in rawGoals)
+        {
+            var pool = pools.GetValueOrDefault(goal.AccountId);
+            var allocation = goal.Status == "archived"
+                ? new GoalAllocationResult(0, pool)
+                : FinanceMath.AllocateGoal(pool, goal.TargetAmount);
+            var allocated = allocation.Allocated;
+            if (goal.Status != "archived") pools[goal.AccountId] = allocation.RemainingPool;
+            var remaining = Math.Max(0, goal.TargetAmount - allocated);
+            var pace = FinanceMath.CalculateGoalPace(remaining, goal.TargetDate, today);
+            goals.Add(new(
+                goal.Id, goal.Name, goal.Description, goal.TargetAmount, goal.TargetDate, goal.AccountId, goal.AccountName,
+                goal.Priority, goal.IconKey, goal.ColorKey, goal.ImageId,
+                goal.ImageId.HasValue ? $"/api/goals/images/{goal.ImageId}" : null, goal.Status, allocated, remaining,
+                goal.TargetAmount == 0 ? 0 : Math.Round(allocated / goal.TargetAmount * 100, 1), pace.DaysRemaining,
+                pace.Weekly, pace.Monthly, allocated >= goal.TargetAmount));
+        }
+        var active = goals.Where(g => g.Status != "archived").ToList();
+        var allocatedTotal = active.Sum(g => g.AllocatedAmount);
+        var targetTotal = active.Sum(g => g.TargetAmount);
+        return new(goals, allocatedTotal, targetTotal, targetTotal == 0 ? 0 : Math.Round(allocatedTotal / targetTotal * 100, 1));
+    }
+
+    public static async Task<GoalDto> SaveGoalAsync(int? id, SaveGoalRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name) || request.TargetAmount <= 0) throw new ArgumentException("A goal name and positive target are required.");
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        int? previousImageId = null;
+        if (id.HasValue)
+        {
+            await using var previousImage = new NpgsqlCommand("SELECT image_id FROM savings_goals WHERE id=@id", connection);
+            previousImage.Parameters.AddWithValue("id", id.Value);
+            var previous = await previousImage.ExecuteScalarAsync();
+            previousImageId = previous is null or DBNull ? null : Convert.ToInt32(previous);
+        }
+
+        var sql = id.HasValue
+            ? @"UPDATE savings_goals SET name=@name, description=@description, target_amount=@target,
+                target_date=@date, account_id=@account, priority_order=@priority, icon_key=@icon,
+                color_key=@color, image_id=@image, status=@status, updated_at=CURRENT_TIMESTAMP
+                WHERE id=@id RETURNING id"
+            : @"INSERT INTO savings_goals (name, description, target_amount, target_date, account_id,
+                priority_order, icon_key, color_key, image_id, status)
+                VALUES (@name, @description, @target, @date, @account, @priority, @icon, @color, @image, @status)
+                RETURNING id";
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("description", (object?)Clean(request.Description) ?? DBNull.Value);
+        command.Parameters.AddWithValue("target", request.TargetAmount);
+        command.Parameters.AddWithValue("date", request.TargetDate.HasValue ? request.TargetDate.Value.ToDateTime(TimeOnly.MinValue) : DBNull.Value);
+        command.Parameters.AddWithValue("account", request.AccountId);
+        command.Parameters.AddWithValue("priority", request.PriorityOrder);
+        command.Parameters.AddWithValue("icon", request.IconKey);
+        command.Parameters.AddWithValue("color", request.ColorKey);
+        command.Parameters.AddWithValue("image", (object?)request.ImageId ?? DBNull.Value);
+        command.Parameters.AddWithValue("status", request.Status);
+        if (id.HasValue) command.Parameters.AddWithValue("id", id.Value);
+        var savedId = Convert.ToInt32(await command.ExecuteScalarAsync());
+        if (previousImageId.HasValue && previousImageId != request.ImageId)
+        {
+            await using var cleanup = new NpgsqlCommand(
+                "DELETE FROM goal_images WHERE id=@id AND NOT EXISTS (SELECT 1 FROM savings_goals WHERE image_id=@id)", connection);
+            cleanup.Parameters.AddWithValue("id", previousImageId.Value);
+            await cleanup.ExecuteNonQueryAsync();
+        }
+        return (await GetGoalsAsync(true)).Items.Single(g => g.Id == savedId);
+    }
+
+    public static async Task ReorderGoalsAsync(IReadOnlyList<int> ids)
+    {
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            for (var index = 0; index < ids.Count; index++)
+            {
+                await using var command = new NpgsqlCommand("UPDATE savings_goals SET priority_order=@priority, updated_at=CURRENT_TIMESTAMP WHERE id=@id", connection, transaction);
+                command.Parameters.AddWithValue("priority", index + 1);
+                command.Parameters.AddWithValue("id", ids[index]);
+                await command.ExecuteNonQueryAsync();
+            }
+        });
+    }
+
+    public static async Task<int> SaveGoalImageAsync(IFormFile file)
+    {
+        if (file.Length == 0 || file.Length > 2 * 1024 * 1024) throw new ArgumentException("Images must be between 1 byte and 2 MB.");
+        await using var stream = file.OpenReadStream();
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory);
+        var bytes = memory.ToArray();
+        var type = DetectImageType(bytes) ?? throw new ArgumentException("Only PNG, JPEG, and WebP images are supported.");
+        var hash = Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            INSERT INTO goal_images (content_type, file_name, content, content_hash)
+            VALUES (@type, @name, @content, @hash) RETURNING id
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("type", type);
+        command.Parameters.AddWithValue("name", Path.GetFileName(file.FileName));
+        command.Parameters.AddWithValue("content", bytes);
+        command.Parameters.AddWithValue("hash", hash);
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    public static async Task<(byte[] Content, string ContentType, string Hash)?> GetGoalImageAsync(int id)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand("SELECT content, content_type, content_hash FROM goal_images WHERE id=@id", connection);
+        command.Parameters.AddWithValue("id", id);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) return null;
+        return ((byte[])reader[0], reader.GetString(1), reader.GetString(2));
+    }
+
+    public static async Task<bool> DeleteGoalImageAsync(int id)
+    {
+        const string sql = "DELETE FROM goal_images WHERE id=@id AND NOT EXISTS (SELECT 1 FROM savings_goals WHERE image_id=@id)";
+        return await PostgreSqlQuerier.ExecuteNonQueryAsync(sql, new() { ["id"] = id }) > 0;
+    }
+
+    public static async Task<BudgetDto> SaveBudgetAsync(SaveBudgetRequest request)
+    {
+        if (request.MonthlyAmount < 0) throw new ArgumentException("Budget amount cannot be negative.");
+        var month = new DateOnly(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
+        const string sql = """
+            INSERT INTO budget_definitions (category_id, monthly_amount, rollover_enabled, effective_from)
+            VALUES (@category, @amount, @rollover, @month)
+            ON CONFLICT (category_id) DO UPDATE SET monthly_amount=excluded.monthly_amount,
+                rollover_enabled=excluded.rollover_enabled, updated_at=CURRENT_TIMESTAMP, is_active=true
+            RETURNING id
+            """;
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("category", request.CategoryId);
+        command.Parameters.AddWithValue("amount", request.MonthlyAmount);
+        command.Parameters.AddWithValue("rollover", request.RolloverEnabled);
+        command.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+        var id = Convert.ToInt32(await command.ExecuteScalarAsync());
+        return (await GetBudgetsAsync(month)).Single(b => b.Id == id);
+    }
+
+    public static async Task<IReadOnlyList<BudgetDto>> GetBudgetsAsync(DateOnly? requestedMonth = null)
+    {
+        var month = requestedMonth.HasValue ? new DateOnly(requestedMonth.Value.Year, requestedMonth.Value.Month, 1) : new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
+        var nextMonth = month.AddMonths(1);
+        var previousMonth = month.AddMonths(-1);
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT b.id, b.category_id, c.name, c.icon_key, c.color_key, b.monthly_amount, b.rollover_enabled,
+                coalesce((SELECT sum(abs(t.amount)) FROM transactions t JOIN accounts a ON a.id=t.account_id
+                    WHERE t.category_id=b.category_id AND t.amount < 0 AND NOT t.is_transfer AND NOT a.is_archived
+                    AND t.transaction_date >= @month AND t.transaction_date < @next_month), 0),
+                coalesce((SELECT bm.base_amount + bm.rollover_in - bm.spent_amount FROM budget_months bm
+                    WHERE bm.budget_id=b.id AND bm.month=@previous_month), 0)
+            FROM budget_definitions b JOIN categories c ON c.id=b.category_id
+            WHERE b.is_active ORDER BY c.name
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("next_month", nextMonth.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("previous_month", previousMonth.ToDateTime(TimeOnly.MinValue));
+        var raw = new List<(int Id, int CategoryId, string Name, string Icon, string Color, decimal Amount, bool Rollover, decimal Spent, decimal PriorRemaining)>();
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) raw.Add((reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetDecimal(5), reader.GetBoolean(6), reader.GetDecimal(7), reader.GetDecimal(8)));
+        }
+        var result = new List<BudgetDto>();
+        foreach (var item in raw)
+        {
+            var calculated = FinanceMath.CalculateBudget(item.Amount, item.Rollover, item.PriorRemaining, item.Spent);
+            result.Add(new(item.Id, item.CategoryId, item.Name, item.Icon, item.Color, item.Amount, item.Rollover,
+                calculated.RolloverIn, calculated.Available, item.Spent, calculated.Remaining, calculated.ProgressPercent));
+            const string snapshotSql = """
+                INSERT INTO budget_months (budget_id, month, base_amount, rollover_in, spent_amount)
+                VALUES (@budget, @month, @base, @rollover, @spent)
+                ON CONFLICT (budget_id, month) DO UPDATE SET base_amount=excluded.base_amount,
+                    rollover_in=excluded.rollover_in, spent_amount=excluded.spent_amount
+                """;
+            await using var snapshot = new NpgsqlCommand(snapshotSql, connection);
+            snapshot.Parameters.AddWithValue("budget", item.Id);
+            snapshot.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+            snapshot.Parameters.AddWithValue("base", item.Amount);
+            snapshot.Parameters.AddWithValue("rollover", calculated.RolloverIn);
+            snapshot.Parameters.AddWithValue("spent", item.Spent);
+            await snapshot.ExecuteNonQueryAsync();
+        }
+        return result;
+    }
+
+    public static async Task<IReadOnlyList<RecurringSuggestionDto>> GetRecurringSuggestionsAsync()
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT t.account_id, a.name, coalesce(nullif(trim(t.payee), ''), nullif(trim(t.memo), ''), 'Unknown'),
+                t.transaction_date, t.amount
+            FROM transactions t JOIN accounts a ON a.id=t.account_id
+            WHERE t.transaction_date >= CURRENT_DATE - interval '400 days' AND NOT t.is_transfer
+                AND coalesce(t.transaction_type, '') <> 'Initial Deposit' AND NOT a.is_archived
+            ORDER BY t.account_id, lower(coalesce(t.payee, t.memo)), t.transaction_date
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        var patterns = new List<PatternRow>();
+        while (await reader.ReadAsync()) patterns.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), DateOnly.FromDateTime(reader.GetDateTime(3)), reader.GetDecimal(4)));
+        var existing = (await GetRecurringItemsAsync()).Select(r => (r.AccountId, NormalizeText(r.Name))).ToHashSet();
+        var suggestions = new List<RecurringSuggestionDto>();
+        foreach (var group in patterns.GroupBy(p => (p.AccountId, Key: NormalizeText(p.Name), Kind: p.Amount > 0 ? "income" : "bill")))
+        {
+            var rows = group.OrderBy(x => x.Date).ToList();
+            if (rows.Count < 3 || string.IsNullOrWhiteSpace(group.Key.Key) || existing.Contains((group.Key.AccountId, group.Key.Key))) continue;
+            var gaps = rows.Zip(rows.Skip(1), (a, b) => b.Date.DayNumber - a.Date.DayNumber).ToList();
+            var averageGap = gaps.Average();
+            var frequency = FrequencyFromGap(averageGap);
+            if (frequency is null) continue;
+            var tolerance = Math.Max(3, averageGap * .25);
+            if (gaps.Any(g => Math.Abs(g - averageGap) > tolerance)) continue;
+            var amounts = rows.Select(x => Math.Abs(x.Amount)).ToList();
+            var averageAmount = amounts.Average();
+            if (averageAmount == 0 || amounts.Any(a => Math.Abs(a - averageAmount) / averageAmount > .15m)) continue;
+            var next = NormalizeNextDate(rows[^1].Date, frequency, DateOnly.FromDateTime(DateTime.UtcNow));
+            var confidence = Math.Min(.99m, .65m + rows.Count * .04m);
+            suggestions.Add(new(rows[^1].Name, group.Key.Kind, group.Key.AccountId, rows[^1].AccountName,
+                Math.Round(averageAmount, 2), frequency, next, rows.Count, confidence));
+        }
+        return suggestions.OrderByDescending(s => s.Confidence).Take(12).ToList();
+    }
+
+    public static async Task<DashboardDto> GetDashboardAsync()
+    {
+        var settings = await GetSettingsAsync();
+        var accounts = await GetAccountsAsync();
+        var safety = await GetAccountSafetyAsync();
+        var recurring = await GetRecurringItemsAsync();
+        var goals = await GetGoalsAsync();
+        var budgets = await GetBudgetsAsync();
+        var recent = (await GetTransactionsAsync(null, null, null, "all", null, null, 1, 6)).Items;
+        var included = accounts.Where(a => a.IncludeInSafeToSpend).Select(a => a.Id).ToHashSet();
+        var includedSafety = safety.Where(s => included.Contains(s.AccountId)).ToList();
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var nextPayday = recurring.Where(r => r.Kind == "income")
+            .Select(r => NormalizeNextDate(r.NextDate, r.Frequency, today)).OrderBy(d => d).Select(d => (DateOnly?)d).FirstOrDefault();
+        var alerts = new List<string>();
+        if (includedSafety.Sum(s => s.Shortfall) > 0) alerts.Add("One or more accounts are below their protected plan.");
+        if (budgets.Any(b => b.ProgressPercent >= 90)) alerts.Add("A monthly budget is close to or over its limit.");
+        var priorityGoal = goals.Items.FirstOrDefault(g => g.Status == "active" && !g.IsFunded) ?? goals.Items.FirstOrDefault(g => g.Status == "active");
+        if (priorityGoal is { DaysRemaining: < 0 }) alerts.Add($"{priorityGoal.Name} has passed its target date.");
+        return new(settings.HouseholdName, accounts.Sum(a => a.Balance), includedSafety.Sum(s => s.SafeToSpend),
+            includedSafety.Sum(s => s.BufferAmount), includedSafety.Sum(s => s.UpcomingBills), includedSafety.Sum(s => s.Shortfall),
+            nextPayday, safety, recent, priorityGoal, budgets.Where(b => b.ProgressPercent >= 80).OrderByDescending(b => b.ProgressPercent).Take(3).ToList(), alerts);
+    }
+
+    public static async Task<InsightsDto> GetInsightsAsync(DateOnly start, DateOnly end)
+    {
+        if (end < start) throw new ArgumentException("End date must be on or after start date.");
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string transactionSql = """
+            SELECT t.transaction_date::date, t.amount, t.category_id, coalesce(c.name, 'Uncategorised'),
+                coalesce(c.color_key, 'slate'), t.is_transfer, coalesce(t.transaction_type, '')
+            FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id
+            WHERE NOT a.is_archived AND t.transaction_date <= @end ORDER BY t.transaction_date, t.id
+            """;
+        await using var command = new NpgsqlCommand(transactionSql, connection);
+        command.Parameters.AddWithValue("end", end.ToDateTime(TimeOnly.MaxValue));
+        var balance = 0m;
+        var openingBalance = 0m;
+        var income = 0m;
+        var spending = 0m;
+        var uncategorised = 0m;
+        var daily = new SortedDictionary<DateOnly, decimal>();
+        var incomeDaily = new SortedDictionary<DateOnly, decimal>();
+        var spendingDaily = new SortedDictionary<DateOnly, decimal>();
+        var category = new Dictionary<(int?, string, string), decimal>();
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync())
+            {
+                var date = DateOnly.FromDateTime(reader.GetDateTime(0));
+                var amount = reader.GetDecimal(1);
+                balance += amount;
+                if (date < start)
+                {
+                    openingBalance = balance;
+                    continue;
+                }
+                daily[date] = balance;
+                if (reader.GetBoolean(5) || reader.GetString(6) == "Initial Deposit") continue;
+                if (amount > 0) { income += amount; incomeDaily[date] = incomeDaily.GetValueOrDefault(date) + amount; }
+                else
+                {
+                    var spent = Math.Abs(amount);
+                    spending += spent;
+                    spendingDaily[date] = spendingDaily.GetValueOrDefault(date) + spent;
+                    int? categoryId = reader.IsDBNull(2) ? null : reader.GetInt32(2);
+                    var key = (categoryId, reader.GetString(3), reader.GetString(4));
+                    category[key] = category.GetValueOrDefault(key) + spent;
+                    if (reader.GetString(3) == "Uncategorised") uncategorised += spent;
+                }
+            }
+        }
+        var goalProgress = (await GetGoalsAsync()).ProgressPercent;
+        var categoryRows = category.OrderByDescending(x => x.Value).Select(x => new CategorySpendDto(
+            x.Key.Item1, x.Key.Item2, x.Key.Item3, x.Value, spending == 0 ? 0 : Math.Round(x.Value / spending * 100, 1))).ToList();
+        return new(start, end, balance, income, spending, income - spending, income == 0 ? 0 : Math.Round((income - spending) / income * 100, 1),
+            FillBalanceTrend(start, end, daily, openingBalance), categoryRows,
+            incomeDaily.Select(x => new TrendPointDto(x.Key, x.Value)).ToList(),
+            spendingDaily.Select(x => new TrendPointDto(x.Key, x.Value)).ToList(), goalProgress, uncategorised);
+    }
+
+    public static async Task<IReadOnlyList<SearchResultDto>> SearchAsync(string query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return [];
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            (SELECT 'transaction' AS type, t.id, coalesce(t.payee, t.memo, 'Transaction') AS title,
+                a.name || ' · ' || to_char(t.amount, 'FM£999,999,990.00') AS subtitle, '/transactions' AS route
+             FROM transactions t JOIN accounts a ON a.id=t.account_id
+             WHERE t.payee ILIKE @query OR t.memo ILIKE @query ORDER BY t.transaction_date DESC LIMIT 6)
+            UNION ALL
+            (SELECT 'account', a.id, a.name, coalesce(a.institution, 'Account'), '/settings'
+             FROM accounts a WHERE NOT a.is_archived AND (a.name ILIKE @query OR a.institution ILIKE @query) LIMIT 4)
+            UNION ALL
+            (SELECT 'goal', g.id, g.name, coalesce(g.description, 'Savings goal'), '/goals'
+             FROM savings_goals g WHERE g.status <> 'archived' AND (g.name ILIKE @query OR g.description ILIKE @query) LIMIT 4)
+            UNION ALL
+            (SELECT 'plan', r.id, r.name, initcap(r.kind) || ' · ' || initcap(r.frequency), '/plan'
+             FROM recurring_items r WHERE r.is_active AND r.name ILIKE @query LIMIT 4)
+            LIMIT 16
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("query", $"%{query.Trim()}%");
+        await using var reader = await command.ExecuteReaderAsync();
+        var rows = new List<SearchResultDto>();
+        while (await reader.ReadAsync()) rows.Add(new(reader.GetString(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3), reader.GetString(4)));
+        return rows;
+    }
+
+    private static AccountDto ReadAccount(NpgsqlDataReader reader) => new(
+        reader.GetInt32(0), reader.GetString(1), reader.IsDBNull(2) ? "Household" : reader.GetString(2),
+        reader.GetBoolean(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
+        reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetDecimal(7), reader.GetDecimal(8), reader.GetBoolean(9), reader.GetBoolean(10));
+
+    private static TransactionDtoV2 ReadTransaction(NpgsqlDataReader reader) => new(
+        reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), DateOnly.FromDateTime(reader.GetDateTime(3)),
+        reader.GetDecimal(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6),
+        reader.IsDBNull(7) ? null : reader.GetInt32(7), reader.GetString(8), reader.GetString(9), reader.GetBoolean(10),
+        reader.IsDBNull(11) ? null : reader.GetString(11), reader.GetDecimal(12));
+
+    private static RecurringItemDto ReadRecurring(NpgsqlDataReader reader) => new(
+        reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), reader.GetString(4),
+        reader.IsDBNull(5) ? null : reader.GetInt32(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetDecimal(7),
+        reader.GetString(8), DateOnly.FromDateTime(reader.GetDateTime(9)), reader.GetString(10), reader.GetBoolean(11));
+
+    private static void AddTransactionFilters(NpgsqlCommand command, int? accountId, int? categoryId, string? search, DateOnly? start, DateOnly? end)
+    {
+        if (accountId.HasValue) command.Parameters.AddWithValue("account_id", accountId.Value);
+        if (categoryId.HasValue) command.Parameters.AddWithValue("category_id", categoryId.Value);
+        if (!string.IsNullOrWhiteSpace(search)) command.Parameters.AddWithValue("search", $"%{search.Trim()}%");
+        if (start.HasValue) command.Parameters.AddWithValue("start_date", start.Value.ToDateTime(TimeOnly.MinValue));
+        if (end.HasValue) command.Parameters.AddWithValue("end_date", end.Value.ToDateTime(TimeOnly.MinValue));
+    }
+
+    private static IReadOnlyList<TrendPointDto> FillBalanceTrend(DateOnly start, DateOnly end, SortedDictionary<DateOnly, decimal> changes, decimal openingBalance)
+    {
+        var points = new List<TrendPointDto>();
+        var known = openingBalance;
+        for (var date = start; date <= end; date = date.AddDays(1))
+        {
+            if (changes.TryGetValue(date, out var value)) known = value;
+            if (date == start || date == end || date.DayNumber % 3 == 0) points.Add(new(date, known));
+        }
+        return points;
+    }
+
+    private static decimal SumOccurrences(decimal amount, DateOnly next, string frequency, DateOnly horizon)
+    {
+        var total = 0m;
+        for (var date = next; date <= horizon; date = Advance(date, frequency)) total += amount;
+        return total;
+    }
+
+    private static DateOnly NormalizeNextDate(DateOnly date, string frequency, DateOnly today)
+    {
+        while (date < today) date = Advance(date, frequency);
+        return date;
+    }
+
+    private static DateOnly Advance(DateOnly date, string frequency) => frequency switch
+    {
+        "weekly" => date.AddDays(7),
+        "fortnightly" => date.AddDays(14),
+        "quarterly" => date.AddMonths(3),
+        "yearly" => date.AddYears(1),
+        _ => date.AddMonths(1),
+    };
+
+    private static string? FrequencyFromGap(double days) => days switch
+    {
+        >= 5 and <= 9 => "weekly",
+        >= 11 and <= 17 => "fortnightly",
+        >= 24 and <= 36 => "monthly",
+        >= 75 and <= 105 => "quarterly",
+        >= 330 and <= 400 => "yearly",
+        _ => null,
+    };
+
+    private static void ValidateAccount(string type, decimal safeZone, string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Account name is required.");
+        if (!AccountTypes.Contains(type)) throw new ArgumentException("Unsupported account type.");
+        if (safeZone < 0) throw new ArgumentException("Safe-zone amount cannot be negative.");
+    }
+
+    private static void ValidateRecurring(SaveRecurringItemRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Name) || request.Amount <= 0) throw new ArgumentException("Name and positive amount are required.");
+        if (request.Kind is not ("bill" or "income")) throw new ArgumentException("Recurring kind must be bill or income.");
+        if (!Frequencies.Contains(request.Frequency)) throw new ArgumentException("Unsupported frequency.");
+    }
+
+    private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+    private static string NormalizeText(string value) => new(value.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+
+    private static string? DetectImageType(byte[] bytes)
+    {
+        if (bytes.Length >= 8 && bytes.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })) return "image/png";
+        if (bytes.Length >= 3 && bytes[0] == 0xff && bytes[1] == 0xd8 && bytes[2] == 0xff) return "image/jpeg";
+        if (bytes.Length >= 12 && Encoding.ASCII.GetString(bytes, 0, 4) == "RIFF" && Encoding.ASCII.GetString(bytes, 8, 4) == "WEBP") return "image/webp";
+        return null;
+    }
+
+    private sealed record GoalRow(int Id, string Name, string? Description, decimal TargetAmount, DateOnly? TargetDate,
+        int AccountId, string AccountName, int Priority, string IconKey, string ColorKey, int? ImageId, string Status);
+    private sealed record PatternRow(int AccountId, string AccountName, string Name, DateOnly Date, decimal Amount);
+}

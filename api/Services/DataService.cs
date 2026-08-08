@@ -162,14 +162,27 @@ namespace financesApi.services
                 };
                 
                 var insertQuery = @"
+                    WITH chosen_category AS (
+                        SELECT coalesce(
+                            (SELECT tr.category_id FROM transaction_rules tr
+                             WHERE tr.is_active AND lower(@payee::text) LIKE '%' || lower(tr.match_text) || '%'
+                             ORDER BY tr.priority, tr.id LIMIT 1),
+                            (SELECT c.id FROM categories c
+                             WHERE lower(c.name) = lower(coalesce(@category::text, '')) LIMIT 1),
+                            (SELECT c.id FROM categories c WHERE c.name = 'Uncategorised')
+                        ) AS id
+                    )
                     INSERT INTO transactions (
                         account_id, transaction_date, amount, payee, memo,
-                        fitid, transaction_type, category, check_number, source_file_type
+                        fitid, transaction_type, category, check_number, source_file_type,
+                        category_id, is_transfer
                     )
-                    VALUES (
+                    SELECT
                         @accountId, @transaction_date, @amount, @payee, @memo,
-                        @fitid, @transaction_type, @category, @check_number, @source_file_type
-                    )";
+                        @fitid, @transaction_type, @category, @check_number, @source_file_type,
+                        chosen_category.id,
+                        exists(SELECT 1 FROM categories c WHERE c.id = chosen_category.id AND c.kind = 'transfer')
+                    FROM chosen_category";
 
                 var insertParams = new Dictionary<string, object>
                 {
