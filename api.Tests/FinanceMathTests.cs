@@ -52,4 +52,22 @@ public sealed class FinanceMathTests
         Assert.Equal(-3, overdue.DaysRemaining);
         Assert.Equal(36525m, overdue.Monthly);
     }
+
+    [Fact]
+    public void CreditPositionTreatsNegativeBalanceAsDebt()
+    {
+        var result = FinanceMath.CalculateCreditPosition(-1200m, 4000m);
+        Assert.Equal(1200m, result.DebtBalance);
+        Assert.Equal(2800m, result.AvailableCredit);
+        Assert.Equal(30m, result.UtilizationPercent);
+    }
+
+    [Fact]
+    public void HouseholdPositionSubtractsDebtFromAssets()
+    {
+        var result = FinanceMath.CalculateHouseholdPosition(new[] { 3000m, 800m, -1200m });
+        Assert.Equal(3800m, result.Assets);
+        Assert.Equal(1200m, result.Debt);
+        Assert.Equal(2600m, result.NetPosition);
+    }
 }
