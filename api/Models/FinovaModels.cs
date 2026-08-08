@@ -19,18 +19,25 @@ public sealed record AccountDto(
     string Name,
     string OwnerName,
     bool IsShared,
+    string PrimaryHolderName,
+    string? SecondaryHolderName,
     string AccountType,
     string? Institution,
     string? LastFour,
+    decimal? CreditLimit,
     decimal Balance,
+    decimal DebtBalance,
+    decimal CreditBalance,
+    decimal? AvailableCredit,
+    decimal? CreditUtilizationPercent,
     decimal SafeZoneAmount,
     bool IncludeInSafeToSpend,
     bool IsArchived);
 
 public sealed record CreateAccountRequest(
     string Name,
-    string FirstName,
-    string LastName,
+    string? FirstName,
+    string? LastName,
     bool IsShared,
     string AccountType,
     string? Institution,
@@ -38,7 +45,10 @@ public sealed record CreateAccountRequest(
     decimal OpeningBalance,
     DateOnly OpeningDate,
     decimal SafeZoneAmount,
-    bool IncludeInSafeToSpend);
+    bool IncludeInSafeToSpend,
+    string? PrimaryHolderName = null,
+    string? SecondaryHolderName = null,
+    decimal? CreditLimit = null);
 
 public sealed record UpdateAccountRequest(
     string Name,
@@ -48,7 +58,10 @@ public sealed record UpdateAccountRequest(
     string? LastFour,
     decimal SafeZoneAmount,
     bool IncludeInSafeToSpend,
-    bool IsArchived);
+    bool IsArchived,
+    string? PrimaryHolderName = null,
+    string? SecondaryHolderName = null,
+    decimal? CreditLimit = null);
 
 public sealed record CategoryDto(
     int Id,
@@ -62,6 +75,7 @@ public sealed record TransactionDtoV2(
     int Id,
     int AccountId,
     string AccountName,
+    string AccountType,
     DateOnly Date,
     decimal Amount,
     string? Payee,
@@ -182,7 +196,12 @@ public sealed record SaveBudgetRequest(
 public sealed record AccountSafetyDto(
     int AccountId,
     string AccountName,
+    string AccountType,
     decimal Balance,
+    decimal DebtBalance,
+    decimal? CreditLimit,
+    decimal? AvailableCredit,
+    decimal? CreditUtilizationPercent,
     decimal BufferAmount,
     decimal UpcomingBills,
     DateOnly HorizonDate,
@@ -192,6 +211,8 @@ public sealed record AccountSafetyDto(
 public sealed record DashboardDto(
     string HouseholdName,
     decimal TotalBalance,
+    decimal TotalAssets,
+    decimal TotalDebt,
     decimal SafeToSpend,
     decimal TotalProtected,
     decimal UpcomingCommitments,

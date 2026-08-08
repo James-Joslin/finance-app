@@ -46,9 +46,10 @@ public static class FinovaDataService
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         const string sql = """
-            SELECT a.id, a.name, concat_ws(' ', p.first_name, p.last_name), coalesce(a.is_shared, false),
-                a.account_type, a.institution, a.last_four, coalesce(sum(t.amount), 0),
-                a.safe_zone_amount, a.include_in_safe_to_spend, a.is_archived
+            SELECT a.id, a.name,
+                coalesce(a.primary_holder_name, nullif(trim(concat_ws(' ', p.first_name, p.last_name)), ''), 'Household'),
+                coalesce(a.is_shared, false), a.secondary_holder_name, a.account_type, a.institution,
+                a.last_four, coalesce(sum(t.amount), 0), a.safe_zone_amount, a.include_in_safe_to_spend, a.is_archived, a.credit_limit
             FROM accounts a
             LEFT JOIN people p ON p.id = a.owner_id
             LEFT JOIN transactions t ON t.account_id = a.id
@@ -66,7 +67,10 @@ public static class FinovaDataService
 
     public static async Task<AccountDto> CreateAccountAsync(CreateAccountRequest request)
     {
-        ValidateAccount(request.AccountType, request.SafeZoneAmount, request.Name);
+        var primaryHolder = Clean(request.PrimaryHolderName) ??
+            Clean(string.Join(' ', new[] { request.FirstName, request.LastName }.Where(value => !string.IsNullOrWhiteSpace(value))));
+        var secondaryHolder = Clean(request.SecondaryHolderName);
+        ValidateAccount(request.AccountType, request.SafeZoneAmount, request.Name, request.IsShared, primaryHolder, secondaryHolder, request.CreditLimit);
         var accountId = 0;
         await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
         {
@@ -78,25 +82,29 @@ public static class FinovaDataService
                 ORDER BY id LIMIT 1;
                 """;
             await using var personCommand = new NpgsqlCommand(personSql, connection, transaction);
-            personCommand.Parameters.AddWithValue("first", request.FirstName.Trim());
-            personCommand.Parameters.AddWithValue("last", request.LastName.Trim());
+            var holderParts = primaryHolder!.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            personCommand.Parameters.AddWithValue("first", holderParts[0]);
+            personCommand.Parameters.AddWithValue("last", holderParts.Length > 1 ? holderParts[1] : "");
             var personId = Convert.ToInt32(await personCommand.ExecuteScalarAsync());
 
             const string accountSql = """
                 INSERT INTO accounts (name, owner_id, is_shared, account_type, institution, last_four,
-                    safe_zone_amount, include_in_safe_to_spend)
-                VALUES (@name, @owner, @shared, @type, @institution, @last_four, @buffer, @include)
+                    safe_zone_amount, include_in_safe_to_spend, primary_holder_name, secondary_holder_name, credit_limit)
+                VALUES (@name, @owner, @shared, @type, @institution, @last_four, @buffer, @include, @primary_holder, @secondary_holder, @credit_limit)
                 RETURNING id
                 """;
             await using var accountCommand = new NpgsqlCommand(accountSql, connection, transaction);
             accountCommand.Parameters.AddWithValue("name", request.Name.Trim());
             accountCommand.Parameters.AddWithValue("owner", personId);
             accountCommand.Parameters.AddWithValue("shared", request.IsShared);
+            accountCommand.Parameters.AddWithValue("primary_holder", primaryHolder);
+            accountCommand.Parameters.AddWithValue("secondary_holder", (object?)secondaryHolder ?? DBNull.Value);
             accountCommand.Parameters.AddWithValue("type", request.AccountType);
             accountCommand.Parameters.AddWithValue("institution", (object?)Clean(request.Institution) ?? DBNull.Value);
             accountCommand.Parameters.AddWithValue("last_four", (object?)Clean(request.LastFour) ?? DBNull.Value);
-            accountCommand.Parameters.AddWithValue("buffer", request.SafeZoneAmount);
-            accountCommand.Parameters.AddWithValue("include", request.IncludeInSafeToSpend);
+            accountCommand.Parameters.AddWithValue("buffer", request.AccountType == "credit" ? 0 : request.SafeZoneAmount);
+            accountCommand.Parameters.AddWithValue("include", request.AccountType != "credit" && request.IncludeInSafeToSpend);
+            accountCommand.Parameters.AddWithValue("credit_limit", request.AccountType == "credit" ? (object?)request.CreditLimit ?? DBNull.Value : DBNull.Value);
             accountId = Convert.ToInt32(await accountCommand.ExecuteScalarAsync());
 
             const string openingSql = """
@@ -108,7 +116,7 @@ public static class FinovaDataService
             await using var openingCommand = new NpgsqlCommand(openingSql, connection, transaction);
             openingCommand.Parameters.AddWithValue("account", accountId);
             openingCommand.Parameters.AddWithValue("date", request.OpeningDate.ToDateTime(TimeOnly.MinValue));
-            openingCommand.Parameters.AddWithValue("amount", request.OpeningBalance);
+            openingCommand.Parameters.AddWithValue("amount", request.AccountType == "credit" ? -Math.Abs(request.OpeningBalance) : request.OpeningBalance);
             openingCommand.Parameters.AddWithValue("fitid", $"opening-{accountId}");
             await openingCommand.ExecuteNonQueryAsync();
         });
@@ -117,24 +125,38 @@ public static class FinovaDataService
 
     public static async Task<AccountDto?> UpdateAccountAsync(int id, UpdateAccountRequest request)
     {
-        ValidateAccount(request.AccountType, request.SafeZoneAmount, request.Name);
+        var primaryHolder = Clean(request.PrimaryHolderName);
+        var secondaryHolder = Clean(request.SecondaryHolderName);
+        ValidateAccount(request.AccountType, request.SafeZoneAmount, request.Name, request.IsShared, primaryHolder, secondaryHolder, request.CreditLimit);
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
+        await using (var typeCommand = new NpgsqlCommand("SELECT account_type FROM accounts WHERE id = @id", connection))
+        {
+            typeCommand.Parameters.AddWithValue("id", id);
+            var existingType = await typeCommand.ExecuteScalarAsync() as string;
+            if (existingType is null) return null;
+            if ((existingType == "credit") != (request.AccountType == "credit"))
+                throw new ArgumentException("An existing account cannot be changed between credit and asset account types because their transaction signs differ.");
+        }
         const string sql = """
             UPDATE accounts SET name = @name, is_shared = @shared, account_type = @type,
                 institution = @institution, last_four = @last_four, safe_zone_amount = @buffer,
-                include_in_safe_to_spend = @include, is_archived = @archived
+                include_in_safe_to_spend = @include, is_archived = @archived,
+                primary_holder_name = @primary_holder, secondary_holder_name = @secondary_holder, credit_limit = @credit_limit
             WHERE id = @id
             """;
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("id", id);
         command.Parameters.AddWithValue("name", request.Name.Trim());
         command.Parameters.AddWithValue("shared", request.IsShared);
+        command.Parameters.AddWithValue("primary_holder", primaryHolder!);
+        command.Parameters.AddWithValue("secondary_holder", (object?)secondaryHolder ?? DBNull.Value);
         command.Parameters.AddWithValue("type", request.AccountType);
         command.Parameters.AddWithValue("institution", (object?)Clean(request.Institution) ?? DBNull.Value);
         command.Parameters.AddWithValue("last_four", (object?)Clean(request.LastFour) ?? DBNull.Value);
-        command.Parameters.AddWithValue("buffer", request.SafeZoneAmount);
-        command.Parameters.AddWithValue("include", request.IncludeInSafeToSpend);
+        command.Parameters.AddWithValue("buffer", request.AccountType == "credit" ? 0 : request.SafeZoneAmount);
+        command.Parameters.AddWithValue("include", request.AccountType != "credit" && request.IncludeInSafeToSpend);
+        command.Parameters.AddWithValue("credit_limit", request.AccountType == "credit" ? (object?)request.CreditLimit ?? DBNull.Value : DBNull.Value);
         command.Parameters.AddWithValue("archived", request.IsArchived);
         if (await command.ExecuteNonQueryAsync() == 0) return null;
         return (await GetAccountsAsync(true)).Single(a => a.Id == id);
@@ -179,7 +201,7 @@ public static class FinovaDataService
         if (accountId.HasValue) filters.Add("tx.account_id = @account_id");
         if (categoryId.HasValue) filters.Add("tx.category_id = @category_id");
         if (!string.IsNullOrWhiteSpace(search)) filters.Add("(tx.payee ILIKE @search OR tx.memo ILIKE @search OR a.name ILIKE @search)");
-        if (type == "income") filters.Add("tx.amount > 0 AND NOT tx.is_transfer");
+        if (type == "income") filters.Add("tx.amount > 0 AND a.account_type <> 'credit' AND NOT tx.is_transfer");
         if (type == "spending") filters.Add("tx.amount < 0 AND NOT tx.is_transfer");
         if (type == "transfer") filters.Add("tx.is_transfer");
         if (startDate.HasValue) filters.Add("tx.transaction_date >= @start_date");
@@ -194,7 +216,7 @@ public static class FinovaDataService
         var countSql = $"{cte} SELECT count(*) FROM tx JOIN accounts a ON a.id = tx.account_id WHERE {where}";
         var dataSql = $"""
             {cte}
-            SELECT tx.id, tx.account_id, a.name, tx.transaction_date, tx.amount, tx.payee, tx.memo,
+            SELECT tx.id, tx.account_id, a.name, a.account_type, tx.transaction_date, tx.amount, tx.payee, tx.memo,
                 tx.category_id, coalesce(c.name, 'Uncategorised'), tx.status, tx.is_transfer,
                 tx.source_file_type, tx.running_balance
             FROM tx JOIN accounts a ON a.id = tx.account_id
@@ -276,6 +298,14 @@ public static class FinovaDataService
         ValidateRecurring(request);
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
+        await using (var accountCommand = new NpgsqlCommand("SELECT account_type FROM accounts WHERE id = @account", connection))
+        {
+            accountCommand.Parameters.AddWithValue("account", request.AccountId);
+            var accountType = await accountCommand.ExecuteScalarAsync() as string;
+            if (accountType is null) throw new ArgumentException("Account was not found.");
+            if (request.Kind == "income" && accountType == "credit")
+                throw new ArgumentException("Credit-card repayments are not income. Record the payday against the account that receives it.");
+        }
         var sql = id.HasValue
             ? @"UPDATE recurring_items SET name=@name, kind=@kind, account_id=@account, category_id=@category,
                 amount=@amount, frequency=@frequency, next_date=@date, source=@source, is_active=@active
@@ -308,6 +338,13 @@ public static class FinovaDataService
         var results = new List<AccountSafetyDto>();
         foreach (var account in accounts)
         {
+            if (account.AccountType == "credit")
+            {
+                results.Add(new(account.Id, account.Name, account.AccountType, account.Balance, account.DebtBalance,
+                    account.CreditLimit, account.AvailableCredit, account.CreditUtilizationPercent,
+                    0, 0, today.AddDays(30), 0, 0));
+                continue;
+            }
             var accountItems = recurring.Where(r => r.AccountId == account.Id).ToList();
             var nextIncome = accountItems.Where(r => r.Kind == "income")
                 .Select(r => NormalizeNextDate(r.NextDate, r.Frequency, today))
@@ -316,7 +353,7 @@ public static class FinovaDataService
             var bills = accountItems.Where(r => r.Kind == "bill")
                 .Sum(r => SumOccurrences(r.Amount, NormalizeNextDate(r.NextDate, r.Frequency, today), r.Frequency, horizon));
             var calculated = FinanceMath.CalculateSafety(account.Balance, account.SafeZoneAmount, bills);
-            results.Add(new(account.Id, account.Name, account.Balance, account.SafeZoneAmount, bills, horizon,
+            results.Add(new(account.Id, account.Name, account.AccountType, account.Balance, 0, null, null, null, account.SafeZoneAmount, bills, horizon,
                 calculated.SafeToSpend, calculated.Shortfall));
         }
         return results;
@@ -346,7 +383,7 @@ public static class FinovaDataService
                 reader.GetInt32(5), reader.GetString(6), reader.GetInt32(7), reader.GetString(8), reader.GetString(9),
                 reader.IsDBNull(10) ? null : reader.GetInt32(10), reader.GetString(11)));
         }
-        var pools = safety.ToDictionary(kv => kv.Key, kv => Math.Max(0, kv.Value.Balance - kv.Value.BufferAmount - kv.Value.UpcomingBills));
+        var pools = safety.ToDictionary(kv => kv.Key, kv => kv.Value.AccountType == "credit" ? 0 : Math.Max(0, kv.Value.Balance - kv.Value.BufferAmount - kv.Value.UpcomingBills));
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var goals = new List<GoalDto>();
         foreach (var goal in rawGoals)
@@ -553,6 +590,7 @@ public static class FinovaDataService
             FROM transactions t JOIN accounts a ON a.id=t.account_id
             WHERE t.transaction_date >= CURRENT_DATE - interval '400 days' AND NOT t.is_transfer
                 AND coalesce(t.transaction_type, '') <> 'Initial Deposit' AND NOT a.is_archived
+                AND (a.account_type <> 'credit' OR t.amount < 0)
             ORDER BY t.account_id, lower(coalesce(t.payee, t.memo)), t.transaction_date
             """;
         await using var command = new NpgsqlCommand(sql, connection);
@@ -591,17 +629,20 @@ public static class FinovaDataService
         var goals = await GetGoalsAsync();
         var budgets = await GetBudgetsAsync();
         var recent = (await GetTransactionsAsync(null, null, null, "all", null, null, 1, 6)).Items;
-        var included = accounts.Where(a => a.IncludeInSafeToSpend).Select(a => a.Id).ToHashSet();
+        var included = accounts.Where(a => a.AccountType != "credit" && a.IncludeInSafeToSpend).Select(a => a.Id).ToHashSet();
         var includedSafety = safety.Where(s => included.Contains(s.AccountId)).ToList();
+        var position = FinanceMath.CalculateHouseholdPosition(accounts.Select(a => a.Balance));
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        var nextPayday = recurring.Where(r => r.Kind == "income")
+        var creditAccountIds = accounts.Where(a => a.AccountType == "credit").Select(a => a.Id).ToHashSet();
+        var nextPayday = recurring.Where(r => r.Kind == "income" && !creditAccountIds.Contains(r.AccountId))
             .Select(r => NormalizeNextDate(r.NextDate, r.Frequency, today)).OrderBy(d => d).Select(d => (DateOnly?)d).FirstOrDefault();
         var alerts = new List<string>();
         if (includedSafety.Sum(s => s.Shortfall) > 0) alerts.Add("One or more accounts are below their protected plan.");
         if (budgets.Any(b => b.ProgressPercent >= 90)) alerts.Add("A monthly budget is close to or over its limit.");
+        if (accounts.Any(a => a.AccountType == "credit" && a.CreditUtilizationPercent >= 80)) alerts.Add("A credit card is using 80% or more of its limit.");
         var priorityGoal = goals.Items.FirstOrDefault(g => g.Status == "active" && !g.IsFunded) ?? goals.Items.FirstOrDefault(g => g.Status == "active");
         if (priorityGoal is { DaysRemaining: < 0 }) alerts.Add($"{priorityGoal.Name} has passed its target date.");
-        return new(settings.HouseholdName, accounts.Sum(a => a.Balance), includedSafety.Sum(s => s.SafeToSpend),
+        return new(settings.HouseholdName, position.NetPosition, position.Assets, position.Debt, includedSafety.Sum(s => s.SafeToSpend),
             includedSafety.Sum(s => s.BufferAmount), includedSafety.Sum(s => s.UpcomingBills), includedSafety.Sum(s => s.Shortfall),
             nextPayday, safety, recent, priorityGoal, budgets.Where(b => b.ProgressPercent >= 80).OrderByDescending(b => b.ProgressPercent).Take(3).ToList(), alerts);
     }
@@ -613,7 +654,7 @@ public static class FinovaDataService
         await connection.OpenAsync();
         const string transactionSql = """
             SELECT t.transaction_date::date, t.amount, t.category_id, coalesce(c.name, 'Uncategorised'),
-                coalesce(c.color_key, 'slate'), t.is_transfer, coalesce(t.transaction_type, '')
+                coalesce(c.color_key, 'slate'), t.is_transfer, coalesce(t.transaction_type, ''), a.account_type
             FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id
             WHERE NOT a.is_archived AND t.transaction_date <= @end ORDER BY t.transaction_date, t.id
             """;
@@ -642,8 +683,9 @@ public static class FinovaDataService
                 }
                 daily[date] = balance;
                 if (reader.GetBoolean(5) || reader.GetString(6) == "Initial Deposit") continue;
-                if (amount > 0) { income += amount; incomeDaily[date] = incomeDaily.GetValueOrDefault(date) + amount; }
-                else
+                var isCredit = reader.GetString(7) == "credit";
+                if (amount > 0 && !isCredit) { income += amount; incomeDaily[date] = incomeDaily.GetValueOrDefault(date) + amount; }
+                else if (amount < 0)
                 {
                     var spent = Math.Abs(amount);
                     spending += spent;
@@ -693,16 +735,27 @@ public static class FinovaDataService
         return rows;
     }
 
-    private static AccountDto ReadAccount(NpgsqlDataReader reader) => new(
-        reader.GetInt32(0), reader.GetString(1), reader.IsDBNull(2) ? "Household" : reader.GetString(2),
-        reader.GetBoolean(3), reader.GetString(4), reader.IsDBNull(5) ? null : reader.GetString(5),
-        reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetDecimal(7), reader.GetDecimal(8), reader.GetBoolean(9), reader.GetBoolean(10));
+    private static AccountDto ReadAccount(NpgsqlDataReader reader)
+    {
+        var primaryHolder = reader.GetString(2);
+        var secondaryHolder = reader.IsDBNull(4) ? null : reader.GetString(4);
+        var accountType = reader.GetString(5);
+        var balance = reader.GetDecimal(8);
+        decimal? creditLimit = reader.IsDBNull(12) ? null : reader.GetDecimal(12);
+        var credit = accountType == "credit"
+            ? FinanceMath.CalculateCreditPosition(balance, creditLimit)
+            : new CreditPositionResult(0, 0, null, null);
+        return new(reader.GetInt32(0), reader.GetString(1), primaryHolder, reader.GetBoolean(3), primaryHolder,
+            secondaryHolder, accountType, reader.IsDBNull(6) ? null : reader.GetString(6),
+            reader.IsDBNull(7) ? null : reader.GetString(7), creditLimit, balance, credit.DebtBalance, credit.CreditBalance,
+            credit.AvailableCredit, credit.UtilizationPercent, reader.GetDecimal(9), reader.GetBoolean(10), reader.GetBoolean(11));
+    }
 
     private static TransactionDtoV2 ReadTransaction(NpgsqlDataReader reader) => new(
-        reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), DateOnly.FromDateTime(reader.GetDateTime(3)),
-        reader.GetDecimal(4), reader.IsDBNull(5) ? null : reader.GetString(5), reader.IsDBNull(6) ? null : reader.GetString(6),
-        reader.IsDBNull(7) ? null : reader.GetInt32(7), reader.GetString(8), reader.GetString(9), reader.GetBoolean(10),
-        reader.IsDBNull(11) ? null : reader.GetString(11), reader.GetDecimal(12));
+        reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3), DateOnly.FromDateTime(reader.GetDateTime(4)),
+        reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetString(7),
+        reader.IsDBNull(8) ? null : reader.GetInt32(8), reader.GetString(9), reader.GetString(10), reader.GetBoolean(11),
+        reader.IsDBNull(12) ? null : reader.GetString(12), reader.GetDecimal(13));
 
     private static RecurringItemDto ReadRecurring(NpgsqlDataReader reader) => new(
         reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), reader.GetString(4),
@@ -762,11 +815,14 @@ public static class FinovaDataService
         _ => null,
     };
 
-    private static void ValidateAccount(string type, decimal safeZone, string name)
+    private static void ValidateAccount(string type, decimal safeZone, string name, bool isShared, string? primaryHolder, string? secondaryHolder, decimal? creditLimit)
     {
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Account name is required.");
+        if (string.IsNullOrWhiteSpace(primaryHolder)) throw new ArgumentException("An account holder name is required.");
+        if (isShared && string.IsNullOrWhiteSpace(secondaryHolder)) throw new ArgumentException("Both account holder names are required for a joint account.");
         if (!AccountTypes.Contains(type)) throw new ArgumentException("Unsupported account type.");
         if (safeZone < 0) throw new ArgumentException("Safe-zone amount cannot be negative.");
+        if (creditLimit < 0) throw new ArgumentException("Credit limit cannot be negative.");
     }
 
     private static void ValidateRecurring(SaveRecurringItemRequest request)

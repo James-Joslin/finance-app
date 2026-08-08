@@ -1,6 +1,8 @@
 namespace financesApi.utilities;
 
 public sealed record SafetyResult(decimal SafeToSpend, decimal Shortfall);
+public sealed record CreditPositionResult(decimal DebtBalance, decimal CreditBalance, decimal? AvailableCredit, decimal? UtilizationPercent);
+public sealed record HouseholdPositionResult(decimal Assets, decimal Debt, decimal NetPosition);
 public sealed record GoalAllocationResult(decimal Allocated, decimal RemainingPool);
 public sealed record BudgetResult(decimal RolloverIn, decimal Available, decimal Remaining, decimal ProgressPercent);
 public sealed record GoalPaceResult(int? DaysRemaining, decimal? Weekly, decimal? Monthly);
@@ -11,6 +13,28 @@ public static class FinanceMath
     {
         var raw = balance - Math.Max(0, buffer) - Math.Max(0, upcomingBills);
         return new(Math.Max(0, raw), Math.Max(0, -raw));
+    }
+
+    public static CreditPositionResult CalculateCreditPosition(decimal balance, decimal? creditLimit)
+    {
+        var debt = Math.Max(0, -balance);
+        var creditBalance = Math.Max(0, balance);
+        var validLimit = creditLimit is > 0 ? creditLimit : null;
+        decimal? available = validLimit.HasValue ? Math.Max(0, validLimit.Value - debt) : null;
+        decimal? utilization = validLimit.HasValue ? Math.Round(debt / validLimit.Value * 100, 1) : null;
+        return new(debt, creditBalance, available, utilization);
+    }
+
+    public static HouseholdPositionResult CalculateHouseholdPosition(IEnumerable<decimal> balances)
+    {
+        var assets = 0m;
+        var debt = 0m;
+        foreach (var balance in balances)
+        {
+            assets += Math.Max(0, balance);
+            debt += Math.Max(0, -balance);
+        }
+        return new(assets, debt, assets - debt);
     }
 
     public static GoalAllocationResult AllocateGoal(decimal availablePool, decimal targetAmount)
