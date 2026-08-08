@@ -1,6 +1,18 @@
-# Finance App
+# Finova
 
-A private finance application composed of:
+A private, responsive household finance hub for the Matthews Household. Finova combines:
+
+- Safe-to-spend balances after per-account buffers and confirmed near-term bills.
+- Multiple prioritised savings goals with account-backed waterfall allocation and countdowns.
+- Recurring bills and paydays with transaction-pattern suggestions.
+- Monthly category budgets with optional positive rollover.
+- Typed transaction review, categorisation rules, OFX/QIF import, and CSV export.
+- Household insights, global search, responsive layouts, and persistent light/dark themes.
+
+Finova is intentionally login-free for use on a trusted private network. It does not connect to banks
+or move money; balances come from opening values and imported transactions.
+
+The application is composed of:
 
 - A React/Vite frontend.
 - An ASP.NET Core 8 API.
@@ -106,6 +118,25 @@ docker compose --env-file .env.dev -f compose.dev.yml run --rm migrations upgrad
 
 Test downgrades only against a disposable database. A downgrade can destroy application data.
 
+## Tests
+
+Run backend finance-calculation tests in the same .NET toolchain used by the API:
+
+```sh
+docker run --rm -v "$PWD:/repo" -w /repo/api.Tests finance-app-dev-api \
+  dotnet test --configuration Release
+```
+
+Run frontend unit and component tests:
+
+```sh
+docker run --rm -v "$PWD/frontend:/app" -w /app node:22-alpine \
+  node node_modules/vitest/vitest.mjs run
+```
+
+The development stack exposes Swagger at http://localhost:5153/swagger for the typed Finova APIs.
+Legacy upload and reporting routes remain available as compatibility adapters.
+
 ## Backups
 
 Create a compressed production dump on the Docker host:
@@ -138,9 +169,13 @@ Real `.env.dev` and `.env.prod` files are ignored by Git. Only the example files
 
 ## Schema
 
-The initial Alembic revision creates the dump-derived `people`, `accounts`, and `transactions` tables without seed data. It intentionally adds no extra indexes, uniqueness constraints, cascade behavior, authentication tables, or imported legacy data.
+The initial Alembic revision creates the dump-derived `people`, `accounts`, and `transactions`
+tables. The additive Finova revision preserves those records and adds household settings, account
+safety fields, categories and payee rules, savings goals and private images, recurring items, and
+budget definitions/snapshots.
 
-The two API reporting queries are stored under `api/SqlQueries/`; MinIO is no longer required.
+Goal images are stored in PostgreSQL so the documented database backup includes all private app data.
+Uploads accept PNG, JPEG, and WebP files up to 2 MB; SVG uploads are rejected.
 
 ## Troubleshooting
 
