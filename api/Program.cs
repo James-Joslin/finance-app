@@ -1,4 +1,5 @@
 using financesApi.services;
+using financesApi.models;
 using System.Text.Json.Serialization;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,10 +29,17 @@ app.UseExceptionHandler(exceptionHandlerApp =>
     {
         var exception = context.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
         context.Response.ContentType = "application/json";
-        context.Response.StatusCode = exception is ArgumentException ? StatusCodes.Status400BadRequest : StatusCodes.Status500InternalServerError;
+        context.Response.StatusCode = exception switch
+        {
+            ArgumentException => StatusCodes.Status400BadRequest,
+            ResourceConflictException => StatusCodes.Status409Conflict,
+            _ => StatusCodes.Status500InternalServerError,
+        };
         await context.Response.WriteAsJsonAsync(new
         {
-            error = exception is ArgumentException ? exception.Message : "Finova could not complete that request."
+            error = exception is ArgumentException or ResourceConflictException
+                ? exception.Message
+                : "Finova could not complete that request."
         });
     });
 });

@@ -12,117 +12,56 @@ namespace financesApi.utilities
         public static List<TransactionDto> Parse(Stream qifStream)
         {
             var results = new List<TransactionDto>();
-            var seenKeys = new HashSet<TransactionKey>();
-
             using var reader = new StreamReader(qifStream);
-            string line;
-            QifTransactionDto currentTransaction = null;
-            
-            while ((line = reader.ReadLine()) != null)
+            string? line;
+            QifTransactionDto? currentTransaction = null;
+
+            while ((line = reader.ReadLine()) is not null)
             {
                 line = line.Trim();
-                
                 if (line.StartsWith("!Type:"))
                 {
-                    Console.WriteLine($"QIF Account Type: {line.Substring(6)}");
+                    Console.WriteLine($"QIF Account Type: {line[6..]}");
                     continue;
                 }
-                
-                if (string.IsNullOrEmpty(line))
-                    continue;
-                
+                if (string.IsNullOrEmpty(line)) continue;
                 if (line == "^")
                 {
-                    // End of transaction - add it if valid
-                    if (currentTransaction != null && 
-                        currentTransaction.Date != DateTime.MinValue &&
-                        !string.IsNullOrEmpty(currentTransaction.Payee))
-                    {
-                        var key = new TransactionKey
-                        {
-                            Date = currentTransaction.Date,
-                            Amount = currentTransaction.Amount,
-                            Payee = currentTransaction.Payee,
-                            Memo = currentTransaction.Memo
-                        };
-
-                        if (!seenKeys.Contains(key))
-                        {
-                            seenKeys.Add(key);
-                            results.Add(currentTransaction);
-                            // Console.WriteLine($"QIF Transaction: {currentTransaction.Date:yyyy-MM-dd} | {currentTransaction.Amount:F2} | {currentTransaction.Payee}");
-                        }
-                    }
+                    AddIfValid(currentTransaction, results);
                     currentTransaction = null;
                     continue;
                 }
-                
-                // Start new transaction if needed
-                if (currentTransaction == null && line.Length > 1)
+                if (currentTransaction is null && line.Length > 1)
                 {
                     currentTransaction = new QifTransactionDto
                     {
                         Date = DateTime.MinValue,
                         Amount = 0,
-                        Payee = ""
+                        Payee = string.Empty,
                     };
                 }
-                
-                if (currentTransaction != null && line.Length > 1)
+                if (currentTransaction is null || line.Length <= 1) continue;
+                var value = line[1..].Trim();
+                switch (line[0])
                 {
-                    char field = line[0];
-                    string value = line.Substring(1).Trim();
-                    
-                    switch (field)
-                    {
-                        case 'D': // Date
-                            currentTransaction.Date = ParseQifDate(value);
-                            break;
-                            
-                        case 'T': // Amount
-                            currentTransaction.Amount = ParseQifAmount(value);
-                            break;
-                            
-                        case 'P': // Payee
-                            currentTransaction.Payee = value;
-                            break;
-                            
-                        case 'M': // Memo
-                            currentTransaction.Memo = value;
-                            break;
-                            
-                        case 'N': // Check number
-                            currentTransaction.CheckNumber = value;
-                            break;
-                            
-                        case 'L': // Category
-                            currentTransaction.Category = value;
-                            break;
-                    }
+                    case 'D': currentTransaction.Date = ParseQifDate(value); break;
+                    case 'T': currentTransaction.Amount = ParseQifAmount(value); break;
+                    case 'P': currentTransaction.Payee = value; break;
+                    case 'M': currentTransaction.Memo = value; break;
+                    case 'N': currentTransaction.CheckNumber = value; break;
+                    case 'L': currentTransaction.Category = value; break;
                 }
             }
-            
-            // Handle last transaction if file doesn't end with ^
-            if (currentTransaction != null && 
-                currentTransaction.Date != DateTime.MinValue &&
-                !string.IsNullOrEmpty(currentTransaction.Payee))
-            {
-                var key = new TransactionKey
-                {
-                    Date = currentTransaction.Date,
-                    Amount = currentTransaction.Amount,
-                    Payee = currentTransaction.Payee,
-                    Memo = currentTransaction.Memo
-                };
 
-                if (!seenKeys.Contains(key))
-                {
-                    results.Add(currentTransaction);
-                }
-            }
-            
-            Console.WriteLine($"Total unique QIF transactions found: {results.Count}");
+            AddIfValid(currentTransaction, results);
+            Console.WriteLine($"Total QIF transactions found: {results.Count}");
             return results;
+        }
+
+        private static void AddIfValid(QifTransactionDto? transaction, ICollection<TransactionDto> results)
+        {
+            if (transaction is not null && transaction.Date != DateTime.MinValue && !string.IsNullOrWhiteSpace(transaction.Payee))
+                results.Add(transaction);
         }
 
         private static DateTime ParseQifDate(string dateStr)

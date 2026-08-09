@@ -1,24 +1,28 @@
 import { useEffect, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, CalendarClock, Check, CreditCard, Lightbulb, Plus, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, CalendarClock, Check, CreditCard, Lightbulb, Pencil, Plus, ShieldCheck, Sparkles } from 'lucide-react';
+import RecurringEditor from '../components/RecurringEditor';
+import OccurrenceEditor from '../components/OccurrenceEditor';
 import { Card, Field, Modal, PageState, Pill, Progress } from '../components/ui';
 import { apiError, money, percent, relativeDate, shortDate } from '../lib/format';
 import {
     mutations, queryKeys, useAccounts, useBudgets, useCategories, useFinovaMutation,
-    useRecurring, useSafety, useSuggestions,
+    useOccurrences, useRecurring, useSafety, useSuggestions,
 } from '../lib/queries';
 
 export default function PlanPage() {
     const safety = useSafety();
     const recurring = useRecurring();
+    const occurrences = useOccurrences();
     const budgets = useBudgets();
     const suggestions = useSuggestions();
     const accounts = useAccounts();
     const categories = useCategories();
-    const [recurringOpen, setRecurringOpen] = useState(false);
+    const [recurringEditor, setRecurringEditor] = useState(null);
+    const [occurrenceEditor, setOccurrenceEditor] = useState(null);
     const [budgetOpen, setBudgetOpen] = useState(false);
 
-    const loading = safety.isLoading || recurring.isLoading || budgets.isLoading;
-    const error = safety.error || recurring.error || budgets.error;
+    const loading = safety.isLoading || recurring.isLoading || occurrences.isLoading || budgets.isLoading;
+    const error = safety.error || recurring.error || occurrences.error || budgets.error;
 
     return (
         <PageState loading={loading} error={error && apiError(error)}>
@@ -32,11 +36,18 @@ export default function PlanPage() {
                 </div>
 
                 <section className="section-heading">
-                    <div><span className="eyebrow">Cash-flow calendar</span><h2>Upcoming bills and paydays</h2><p>Only confirmed items change safe to spend.</p></div>
-                    <button className="button" onClick={() => setRecurringOpen(true)}><Plus /> Add recurring</button>
+                    <div><span className="eyebrow">Cash-flow calendar</span><h2>Upcoming bills and paydays</h2><p>Only unmatched confirmed occurrences change safe to spend.</p></div>
                 </section>
                 <Card className="plan-list-card">
-                    <RecurringTimeline items={recurring.data || []} />
+                    <OccurrenceTimeline items={(occurrences.data || []).filter((item) => item.status === 'expected').slice(0, 12)} onEdit={setOccurrenceEditor} />
+                </Card>
+
+                <section className="section-heading">
+                    <div><span className="eyebrow">Recurring rules</span><h2>Flexible household schedules</h2><p>Edit the rule for every future occurrence, or pause it without losing its history.</p></div>
+                    <button className="button" onClick={() => setRecurringEditor('new')}><Plus /> Add recurring</button>
+                </section>
+                <Card className="plan-list-card">
+                    <RecurringTimeline items={recurring.data || []} onEdit={setRecurringEditor} />
                 </Card>
 
                 {(suggestions.data || []).length > 0 && <Suggestions items={suggestions.data} />}
@@ -50,7 +61,8 @@ export default function PlanPage() {
                     {(budgets.data || []).length === 0 && <Card className="empty-inline"><Lightbulb /><p>Set the first monthly category budget to start measuring pace.</p></Card>}
                 </div>
 
-                <RecurringModal open={recurringOpen} onClose={() => setRecurringOpen(false)} accounts={accounts.data || []} categories={categories.data || []} />
+                <RecurringEditor open={Boolean(recurringEditor)} item={recurringEditor && recurringEditor !== 'new' ? recurringEditor : null} onClose={() => setRecurringEditor(null)} accounts={accounts.data || []} categories={categories.data || []} />
+                <OccurrenceEditor occurrence={occurrenceEditor} onClose={() => setOccurrenceEditor(null)} />
                 <BudgetModal open={Boolean(budgetOpen)} budget={typeof budgetOpen === 'object' ? budgetOpen : null} onClose={() => setBudgetOpen(false)} categories={categories.data || []} />
             </div>
         </PageState>
@@ -89,7 +101,23 @@ function SafetyCard({ account }) {
     );
 }
 
-function RecurringTimeline({ items }) {
+function OccurrenceTimeline({ items, onEdit }) {
+    if (items.length === 0) return <div className="empty-inline"><CalendarClock /><p>No upcoming confirmed occurrences. Add a recurring rule or confirm a suggestion.</p></div>;
+    return (
+        <div className="recurring-list">
+            {items.map((item) => (
+                <article key={item.id} className="recurring-row occurrence-row">
+                    <span className={'recurring-icon ' + item.kind}>{item.kind === 'income' ? <ArrowDownToLine /> : <ArrowUpFromLine />}</span>
+                    <span><strong>{item.itemName}</strong><small>{item.accountName} · due {shortDate(item.dueDate)}</small></span>
+                    <span><small>{relativeDate(item.dueDate)}</small><strong className={item.kind === 'income' ? 'positive' : ''}>{item.kind === 'income' ? '+' : '−'}{money(item.expectedAmount)}</strong></span>
+                    <span className="recurring-actions"><Pill tone="info">held</Pill><button className="icon-button" onClick={() => onEdit(item)} aria-label={'Edit ' + item.itemName + ' occurrence'}><Pencil /></button></span>
+                </article>
+            ))}
+        </div>
+    );
+}
+
+function RecurringTimeline({ items, onEdit }) {
     if (items.length === 0) return <div className="empty-inline"><CalendarClock /><p>No recurring items yet. Add a payday or bill to make safe to spend forward-looking.</p></div>;
     return (
         <div className="recurring-list">
@@ -98,7 +126,7 @@ function RecurringTimeline({ items }) {
                     <span className={'recurring-icon ' + item.kind}>{item.kind === 'income' ? <ArrowDownToLine /> : <ArrowUpFromLine />}</span>
                     <span><strong>{item.name}</strong><small>{item.accountName} · {item.frequency}</small></span>
                     <span><small>{relativeDate(item.nextDate)}</small><strong className={item.kind === 'income' ? 'positive' : ''}>{item.kind === 'income' ? '+' : '−'}{money(item.amount)}</strong></span>
-                    <Pill tone={item.source === 'suggestion' ? 'info' : 'neutral'}>{item.source}</Pill>
+                    <span className="recurring-actions"><Pill tone={!item.isActive ? 'warning' : item.lastMatchedDate ? 'success' : item.source === 'suggestion' ? 'info' : 'neutral'}>{!item.isActive ? 'paused' : item.lastMatchedDate ? 'matching' : item.source}</Pill><button className="icon-button" onClick={() => onEdit(item)} aria-label={'Edit ' + item.name}><Pencil /></button></span>
                 </article>
             ))}
         </div>
@@ -136,40 +164,8 @@ function BudgetCard({ budget, onEdit }) {
             <div className="card-heading"><span className={'category-chip color-' + budget.colorKey}>{budget.categoryName}</span><Pill tone={over ? 'danger' : budget.progressPercent >= 80 ? 'warning' : 'success'}>{percent(budget.progressPercent)}</Pill></div>
             <div className="budget-values"><strong>{money(budget.spentAmount)}</strong><span>of {money(budget.availableAmount)}</span></div>
             <Progress value={budget.progressPercent} tone={over ? 'danger' : 'brand'} label={budget.categoryName + ' budget'} />
-            <div className="budget-footer"><span>{over ? money(Math.abs(budget.remainingAmount)) + ' over' : money(budget.remainingAmount) + ' left'}</span>{budget.rolloverEnabled && <span>{money(budget.rolloverIn)} rolled in</span>}</div>
+            <div className="budget-footer"><span>{over ? money(Math.abs(budget.remainingAmount)) + ' over' : money(budget.remainingAmount) + ' left'}</span>{Number(budget.scheduledAmount) > 0 && <span>{money(budget.scheduledAmount)} scheduled · {money(budget.remainingAfterScheduled)} after planned</span>}{budget.rolloverEnabled && <span>{money(budget.rolloverIn)} rolled in</span>}</div>
         </Card>
-    );
-}
-
-function RecurringModal({ open, onClose, accounts, categories }) {
-    const [form, setForm] = useState({ name: '', kind: 'bill', accountId: '', categoryId: '', amount: '', frequency: 'monthly', nextDate: '' });
-    const save = useFinovaMutation(mutations.createRecurring, [queryKeys.recurring, queryKeys.safety, queryKeys.dashboard, queryKeys.suggestions]);
-    const submit = async (event) => {
-        event.preventDefault();
-        await save.mutateAsync({
-            ...form, accountId: Number(form.accountId), categoryId: form.categoryId ? Number(form.categoryId) : null,
-            amount: Number(form.amount), source: 'manual', isActive: true,
-        });
-        onClose();
-    };
-    return (
-        <Modal open={open} onClose={onClose} title="Add a recurring item" copy="Confirmed bills and income make your safe-to-spend figure more useful.">
-            <form className="form-grid" onSubmit={submit}>
-                <Field label="Name" className="span-2"><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Mortgage, payday…" /></Field>
-                <Field label="Type"><select value={form.kind} onChange={(event) => {
-                    const kind = event.target.value;
-                    const selectedAccount = accounts.find((item) => String(item.id) === String(form.accountId));
-                    setForm({ ...form, kind, accountId: kind === 'income' && selectedAccount?.accountType === 'credit' ? '' : form.accountId });
-                }}><option value="bill">Bill</option><option value="income">Income / payday</option></select></Field>
-                <Field label="Amount"><input required min="0.01" step="0.01" type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></Field>
-                <Field label="Account"><select required value={form.accountId} onChange={(event) => setForm({ ...form, accountId: event.target.value })}><option value="">Choose account</option>{accounts.filter((item) => form.kind === 'bill' || item.accountType !== 'credit').map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-                <Field label="Category"><select value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}><option value="">No category</option>{categories.filter((item) => item.kind !== 'income' || form.kind === 'income').map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
-                <Field label="Frequency"><select value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value })}><option value="weekly">Weekly</option><option value="fortnightly">Fortnightly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select></Field>
-                <Field label="Next date"><input required type="date" value={form.nextDate} onChange={(event) => setForm({ ...form, nextDate: event.target.value })} /></Field>
-                {save.error && <p className="form-error span-2">{apiError(save.error)}</p>}
-                <div className="modal-actions span-2"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Add to plan'}</button></div>
-            </form>
-        </Modal>
     );
 }
 

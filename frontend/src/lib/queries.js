@@ -10,6 +10,7 @@ export const queryKeys = {
     goals: ['goals'],
     recurring: ['recurring'],
     suggestions: ['recurring-suggestions'],
+    occurrences: ['recurring-occurrences'],
     budgets: ['budgets'],
     safety: ['safety'],
     transactions: (params) => ['transactions', params],
@@ -31,8 +32,12 @@ export const useCategories = () => useQuery({ queryKey: queryKeys.categories, qu
 export const useTransactionRules = () => useQuery({ queryKey: queryKeys.rules, queryFn: () => get('/categories/rules') });
 export const useDashboard = () => useQuery({ queryKey: queryKeys.dashboard, queryFn: () => get('/dashboard') });
 export const useGoals = () => useQuery({ queryKey: queryKeys.goals, queryFn: () => get('/goals') });
-export const useRecurring = () => useQuery({ queryKey: queryKeys.recurring, queryFn: () => get('/plan/recurring') });
+export const useRecurring = () => useQuery({ queryKey: queryKeys.recurring, queryFn: () => get('/plan/recurring', { activeOnly: false }) });
 export const useSuggestions = () => useQuery({ queryKey: queryKeys.suggestions, queryFn: () => get('/plan/suggestions') });
+export const useOccurrences = (params) => useQuery({
+    queryKey: [...queryKeys.occurrences, params || {}],
+    queryFn: () => get('/plan/occurrences', params),
+});
 export const useBudgets = (month) => useQuery({
     queryKey: [...queryKeys.budgets, month || 'current'],
     queryFn: () => get('/plan/budgets', month ? { month } : undefined),
@@ -71,7 +76,10 @@ export const mutations = {
     reorderGoals: (orderedIds) => post('/goals/reorder', { orderedIds }),
     uploadGoalImage: (form) => post('/goals/images', form, { headers: { 'Content-Type': 'multipart/form-data' } }),
     createRecurring: (body) => post('/plan/recurring', body),
+    markTransactionRecurring: ({ id, body }) => post('/transactions/' + id + '/recurring', body),
     updateRecurring: ({ id, body }) => put('/plan/recurring/' + id, body),
+    deleteRecurring: (id) => del('/plan/recurring/' + id),
+    updateOccurrence: ({ id, body }) => put('/plan/occurrences/' + id, body),
     saveBudget: (body) => put('/plan/budgets', body),
 };
 

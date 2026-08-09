@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Download, FileUp, Filter, RefreshCw, Search, SlidersHorizontal, WalletCards } from 'lucide-react';
+import { CalendarClock, Check, Download, FileUp, Filter, RefreshCw, Search, WalletCards } from 'lucide-react';
+import RecurringEditor from '../components/RecurringEditor';
 import { Card, Field, Modal, PageState, Pill } from '../components/ui';
 import { apiError, money, relativeDate, shortDate } from '../lib/format';
 import { mutations, queryKeys, useAccounts, useCategories, useFinovaMutation, useTransactions } from '../lib/queries';
@@ -12,6 +13,7 @@ export default function TransactionsPage() {
     const [page, setPage] = useState(1);
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
+    const [recurringTransaction, setRecurringTransaction] = useState(null);
     const accounts = useAccounts();
     const categories = useCategories();
 
@@ -72,16 +74,17 @@ export default function TransactionsPage() {
                 )}
 
                 <PageState loading={transactions.isLoading} error={transactions.error && apiError(transactions.error)} empty={transactions.data?.items?.length === 0} emptyTitle="No matching transactions" emptyCopy="Try a different filter or import a bank statement.">
-                    <TransactionTable items={transactions.data?.items || []} categories={categories.data || []} />
+                    <TransactionTable items={transactions.data?.items || []} categories={categories.data || []} onMarkRecurring={setRecurringTransaction} />
                     <Pagination page={page} totalPages={transactions.data?.totalPages || 1} totalItems={transactions.data?.totalItems || 0} onChange={setPage} />
                 </PageState>
             </Card>
             <ImportModal open={importOpen} onClose={() => setImportOpen(false)} accounts={accounts.data || []} />
+            <RecurringEditor open={Boolean(recurringTransaction)} transaction={recurringTransaction} onClose={() => setRecurringTransaction(null)} accounts={accounts.data || []} categories={categories.data || []} />
         </div>
     );
 }
 
-function TransactionTable({ items, categories }) {
+function TransactionTable({ items, categories, onMarkRecurring }) {
     const updateCategory = useFinovaMutation(mutations.updateTransactionCategory, [
         ['transactions'], queryKeys.dashboard, ['insights'], queryKeys.budgets, queryKeys.rules,
     ]);
@@ -89,7 +92,7 @@ function TransactionTable({ items, categories }) {
         <>
             <div className="desktop-table-wrap">
                 <table className="data-table">
-                    <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th>Status</th><th className="align-right">Amount</th></tr></thead>
+                    <thead><tr><th>Date</th><th>Description</th><th>Category</th><th>Account</th><th>Status</th><th className="align-right">Amount</th><th><span className="sr-only">Actions</span></th></tr></thead>
                     <tbody>{items.map((item) => (
                         <tr key={item.id}>
                             <td>{shortDate(item.date)}</td>
@@ -98,6 +101,7 @@ function TransactionTable({ items, categories }) {
                             <td>{item.accountName}</td>
                             <td><Pill tone={item.status === 'completed' ? 'success' : 'info'}>{item.status}</Pill></td>
                             <td className={'align-right amount ' + (isIncomeTransaction(item) ? 'positive' : '')}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</td>
+                            <td className="transaction-action">{item.recurringItemId ? <span className="recurring-linked" title="Matched to a recurring plan"><Check /><span>Planned</span></span> : <button className="icon-button" onClick={() => onMarkRecurring(item)} aria-label={'Mark ' + (item.payee || item.memo || 'transaction') + ' as recurring'} title="Mark as recurring"><CalendarClock /></button>}</td>
                         </tr>
                     ))}</tbody>
                 </table>
@@ -107,7 +111,10 @@ function TransactionTable({ items, categories }) {
                     <article className="mobile-transaction" key={item.id}>
                         <span className={'transaction-mark ' + (isIncomeTransaction(item) ? 'income' : '')}><WalletCards /></span>
                         <span><small>{relativeDate(item.date)}</small><strong>{item.payee || item.memo || 'Transaction'}</strong><em>{item.categoryName} · {item.accountName}{item.transactionTypeCode ? ` · ${item.transactionTypeCode}` : ''}</em></span>
-                        <strong className={isIncomeTransaction(item) ? 'positive' : ''}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</strong>
+                        <span className="mobile-transaction-amount">
+                            <strong className={isIncomeTransaction(item) ? 'positive' : ''}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</strong>
+                            {item.recurringItemId ? <span className="recurring-linked" title="Matched to a recurring plan"><Check /><span>Planned</span></span> : <button className="icon-button" onClick={() => onMarkRecurring(item)} aria-label={'Mark ' + (item.payee || item.memo || 'transaction') + ' as recurring'}><CalendarClock /></button>}
+                        </span>
                     </article>
                 ))}
             </div>

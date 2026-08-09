@@ -92,7 +92,8 @@ public sealed record TransactionDtoV2(
     string Status,
     bool IsTransfer,
     string? SourceFileType,
-    decimal RunningBalance);
+    decimal RunningBalance,
+    int? RecurringItemId);
 
 public sealed record TransactionPageDto(
     IReadOnlyList<TransactionDtoV2> Items,
@@ -166,7 +167,12 @@ public sealed record RecurringItemDto(
     string Frequency,
     DateOnly NextDate,
     string Source,
-    bool IsActive);
+    bool IsActive,
+    string? MatchText,
+    decimal AmountTolerance,
+    int DateWindowDays,
+    string NextStatus,
+    DateOnly? LastMatchedDate);
 
 public sealed record SaveRecurringItemRequest(
     string Name,
@@ -177,7 +183,40 @@ public sealed record SaveRecurringItemRequest(
     string Frequency,
     DateOnly NextDate,
     string Source = "manual",
-    bool IsActive = true);
+    bool IsActive = true,
+    string? MatchText = null,
+    decimal AmountTolerance = 5m,
+    int DateWindowDays = 5,
+    int? SourceTransactionId = null);
+
+public sealed record MarkTransactionRecurringRequest(
+    string? Name,
+    int? CategoryId,
+    decimal? Amount,
+    string Frequency,
+    DateOnly NextDate,
+    decimal AmountTolerance = 5m,
+    int DateWindowDays = 5);
+
+public sealed record RecurringOccurrenceDto(
+    int Id,
+    int RecurringItemId,
+    string ItemName,
+    string Kind,
+    int AccountId,
+    string AccountName,
+    DateOnly DueDate,
+    decimal ExpectedAmount,
+    string Status,
+    int? TransactionId,
+    decimal? ActualAmount,
+    string? Note);
+
+public sealed record UpdateRecurringOccurrenceRequest(
+    DateOnly DueDate,
+    decimal ExpectedAmount,
+    string Status,
+    string? Note = null);
 
 public sealed record RecurringSuggestionDto(
     string Name,
@@ -201,6 +240,8 @@ public sealed record BudgetDto(
     decimal RolloverIn,
     decimal AvailableAmount,
     decimal SpentAmount,
+    decimal ScheduledAmount,
+    decimal RemainingAfterScheduled,
     decimal RemainingAmount,
     decimal ProgressPercent);
 

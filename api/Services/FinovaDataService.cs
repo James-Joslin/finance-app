@@ -250,7 +250,8 @@ public static class FinovaDataService
             {cte}
             SELECT tx.id, tx.account_id, a.name, a.account_type, tx.transaction_date, tx.amount, tx.payee, tx.memo,
                 tx.transaction_type, tc.meaning, tx.category_id, coalesce(c.name, 'Uncategorised'), tx.status, tx.is_transfer,
-                tx.source_file_type, tx.running_balance
+                tx.source_file_type, tx.running_balance,
+                (SELECT ro.recurring_item_id FROM recurring_occurrences ro WHERE ro.transaction_id = tx.id LIMIT 1)
             FROM tx JOIN accounts a ON a.id = tx.account_id
             LEFT JOIN categories c ON c.id = tx.category_id
             LEFT JOIN transaction_type_codes tc ON tc.code = upper(tx.transaction_type) AND tc.is_active
@@ -323,13 +324,17 @@ public static class FinovaDataService
 
     public static async Task<IReadOnlyList<RecurringItemDto>> GetRecurringItemsAsync(bool activeOnly = true)
     {
+        await EnsureRecurringOccurrencesAsync();
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         const string sql = """
             SELECT r.id, r.name, r.kind, r.account_id, a.name, r.category_id, c.name, r.amount,
-                r.frequency, r.next_date, r.source, r.is_active
+                r.frequency, coalesce(next_occurrence.due_date, r.next_date), r.source, r.is_active, r.match_text, r.amount_tolerance, r.date_window_days,
+                coalesce(next_occurrence.status, CASE WHEN r.is_active THEN 'expected' ELSE 'paused' END), last_match.due_date
             FROM recurring_items r JOIN accounts a ON a.id = r.account_id
             LEFT JOIN categories c ON c.id = r.category_id
+            LEFT JOIN LATERAL (SELECT ro.due_date, ro.status FROM recurring_occurrences ro WHERE ro.recurring_item_id=r.id AND ro.status='expected' ORDER BY ro.due_date LIMIT 1) next_occurrence ON true
+            LEFT JOIN LATERAL (SELECT ro.due_date FROM recurring_occurrences ro WHERE ro.recurring_item_id=r.id AND ro.status IN ('matched', 'paid') ORDER BY ro.due_date DESC LIMIT 1) last_match ON true
             WHERE (@active_only = false OR r.is_active) AND NOT a.is_archived
             ORDER BY r.next_date, r.name
             """;
@@ -354,12 +359,41 @@ public static class FinovaDataService
             if (request.Kind == "income" && accountType == "credit")
                 throw new ArgumentException("Credit-card repayments are not income. Record the payday against the account that receives it.");
         }
+        var identity = Clean(request.MatchText) ?? request.Name.Trim();
+        const string duplicateSql = """
+            SELECT r.id FROM recurring_items r
+            WHERE r.account_id=@account AND r.kind=@kind AND r.id<>@current_id
+                AND r.frequency=@frequency
+                AND regexp_replace(lower(coalesce(nullif(trim(r.match_text), ''), r.name)), '[^a-z0-9]+', '', 'g') =
+                    regexp_replace(lower(@identity), '[^a-z0-9]+', '', 'g')
+                AND abs(r.next_date - @date::date) <= greatest(r.date_window_days, @date_window)
+                AND abs(r.amount - @amount) <= greatest(r.amount_tolerance, @amount_tolerance)
+            LIMIT 1
+            """;
+        await using (var duplicate = new NpgsqlCommand(duplicateSql, connection))
+        {
+            duplicate.Parameters.AddWithValue("account", request.AccountId);
+            duplicate.Parameters.AddWithValue("kind", request.Kind);
+            duplicate.Parameters.AddWithValue("current_id", id ?? 0);
+            duplicate.Parameters.AddWithValue("frequency", request.Frequency);
+            duplicate.Parameters.AddWithValue("identity", identity);
+            duplicate.Parameters.AddWithValue("date", request.NextDate.ToDateTime(TimeOnly.MinValue));
+            duplicate.Parameters.AddWithValue("date_window", request.DateWindowDays);
+            duplicate.Parameters.AddWithValue("amount", Math.Abs(request.Amount));
+            duplicate.Parameters.AddWithValue("amount_tolerance", request.AmountTolerance);
+            if (await duplicate.ExecuteScalarAsync() is not null)
+                throw new ResourceConflictException("A matching recurring plan already exists for this account, schedule, and reference. Edit the existing plan instead.");
+        }
         var sql = id.HasValue
             ? @"UPDATE recurring_items SET name=@name, kind=@kind, account_id=@account, category_id=@category,
-                amount=@amount, frequency=@frequency, next_date=@date, source=@source, is_active=@active
+                amount=@amount, frequency=@frequency, next_date=@date, source=@source, is_active=@active,
+                match_text=@match_text, amount_tolerance=@amount_tolerance, date_window_days=@date_window,
+                source_transaction_id=coalesce(@source_transaction, source_transaction_id), updated_at=CURRENT_TIMESTAMP
                 WHERE id=@id RETURNING id"
-            : @"INSERT INTO recurring_items (name, kind, account_id, category_id, amount, frequency, next_date, source, is_active)
-                VALUES (@name, @kind, @account, @category, @amount, @frequency, @date, @source, @active) RETURNING id";
+            : @"INSERT INTO recurring_items (name, kind, account_id, category_id, amount, frequency, next_date, source, is_active,
+                match_text, amount_tolerance, date_window_days, source_transaction_id)
+                VALUES (@name, @kind, @account, @category, @amount, @frequency, @date, @source, @active,
+                @match_text, @amount_tolerance, @date_window, @source_transaction) RETURNING id";
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("name", request.Name.Trim());
         command.Parameters.AddWithValue("kind", request.Kind);
@@ -370,9 +404,224 @@ public static class FinovaDataService
         command.Parameters.AddWithValue("date", request.NextDate.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("source", request.Source);
         command.Parameters.AddWithValue("active", request.IsActive);
+        command.Parameters.AddWithValue("match_text", (object?)Clean(request.MatchText) ?? DBNull.Value);
+        command.Parameters.AddWithValue("amount_tolerance", request.AmountTolerance);
+        command.Parameters.AddWithValue("date_window", request.DateWindowDays);
+        command.Parameters.AddWithValue("source_transaction", (object?)request.SourceTransactionId ?? DBNull.Value);
         if (id.HasValue) command.Parameters.AddWithValue("id", id.Value);
         var savedId = Convert.ToInt32(await command.ExecuteScalarAsync());
+        await RefreshRecurringOccurrencesAsync(savedId);
         return (await GetRecurringItemsAsync(false)).Single(r => r.Id == savedId);
+    }
+
+    public static async Task<RecurringItemDto> MarkTransactionRecurringAsync(int transactionId, MarkTransactionRecurringRequest request)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT t.account_id, abs(t.amount), coalesce(nullif(trim(t.payee), ''), nullif(trim(t.memo), ''), 'Transaction'),
+                t.category_id, t.amount, t.is_transfer, a.account_type,
+                coalesce((SELECT ro.recurring_item_id FROM recurring_occurrences ro WHERE ro.transaction_id=t.id LIMIT 1),
+                    (SELECT r.id FROM recurring_items r WHERE r.source_transaction_id=t.id LIMIT 1))
+            FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.id=@id
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("id", transactionId);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) throw new KeyNotFoundException("Transaction was not found.");
+        var accountId = reader.GetInt32(0);
+        var importedAmount = reader.GetDecimal(1);
+        var reference = reader.GetString(2);
+        int? categoryId = reader.IsDBNull(3) ? null : reader.GetInt32(3);
+        var signedAmount = reader.GetDecimal(4);
+        var isTransfer = reader.GetBoolean(5);
+        var accountType = reader.GetString(6);
+        var existingRecurringId = reader.IsDBNull(7) ? (int?)null : reader.GetInt32(7);
+        await reader.DisposeAsync();
+        if (existingRecurringId.HasValue)
+            return (await GetRecurringItemsAsync(false)).Single(item => item.Id == existingRecurringId.Value);
+        if (isTransfer) throw new ArgumentException("Transfers cannot be marked as household income or bills.");
+        if (accountType == "credit" && signedAmount >= 0)
+            throw new ArgumentException("A credit-card repayment should be planned against the account it is paid from.");
+        var kind = signedAmount < 0 || accountType == "credit" ? "bill" : "income";
+        try
+        {
+            return await SaveRecurringItemAsync(null, new(
+                Clean(request.Name) ?? reference, kind, accountId, request.CategoryId ?? categoryId,
+                request.Amount ?? importedAmount, request.Frequency, request.NextDate, "transaction", true,
+                reference, request.AmountTolerance, request.DateWindowDays, transactionId));
+        }
+        catch (PostgresException exception) when (exception.ConstraintName == "recurring_items_source_transaction_key")
+        {
+            await using var lookup = new NpgsqlCommand("SELECT id FROM recurring_items WHERE source_transaction_id=@transaction", connection);
+            lookup.Parameters.AddWithValue("transaction", transactionId);
+            var recurringId = Convert.ToInt32(await lookup.ExecuteScalarAsync());
+            return (await GetRecurringItemsAsync(false)).Single(item => item.Id == recurringId);
+        }
+    }
+
+    public static async Task<IReadOnlyList<RecurringOccurrenceDto>> GetRecurringOccurrencesAsync(
+        DateOnly? start = null, DateOnly? end = null, int? recurringItemId = null)
+    {
+        await EnsureRecurringOccurrencesAsync();
+        start ??= DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-31);
+        end ??= DateOnly.FromDateTime(DateTime.UtcNow).AddMonths(6);
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT ro.id, ro.recurring_item_id, r.name, r.kind, r.account_id, a.name, ro.due_date,
+                ro.expected_amount, ro.status, ro.transaction_id, ro.actual_amount, ro.note
+            FROM recurring_occurrences ro
+            JOIN recurring_items r ON r.id=ro.recurring_item_id
+            JOIN accounts a ON a.id=r.account_id
+            WHERE ro.due_date BETWEEN @start AND @end AND (@item_id::integer IS NULL OR r.id=@item_id)
+            ORDER BY ro.due_date, r.name
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("start", start.Value.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("end", end.Value.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("item_id", (object?)recurringItemId ?? DBNull.Value);
+        await using var reader = await command.ExecuteReaderAsync();
+        var rows = new List<RecurringOccurrenceDto>();
+        while (await reader.ReadAsync()) rows.Add(new(
+            reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3), reader.GetInt32(4), reader.GetString(5),
+            DateOnly.FromDateTime(reader.GetDateTime(6)), reader.GetDecimal(7), reader.GetString(8),
+            reader.IsDBNull(9) ? null : reader.GetInt32(9), reader.IsDBNull(10) ? null : reader.GetDecimal(10),
+            reader.IsDBNull(11) ? null : reader.GetString(11)));
+        return rows;
+    }
+
+    public static async Task<RecurringOccurrenceDto> UpdateRecurringOccurrenceAsync(int id, UpdateRecurringOccurrenceRequest request)
+    {
+        if (request.ExpectedAmount < 0) throw new ArgumentException("Expected amount cannot be negative.");
+        if (request.Status is not ("expected" or "paid" or "skipped"))
+            throw new ArgumentException("An occurrence can be expected, paid, or skipped.");
+        const string sql = """
+            UPDATE recurring_occurrences SET due_date=@date, expected_amount=@amount, status=@status,
+                actual_amount=CASE WHEN @status='paid' THEN @amount ELSE actual_amount END,
+                matched_at=CASE WHEN @status='paid' THEN CURRENT_TIMESTAMP ELSE matched_at END,
+                note=@note, updated_at=CURRENT_TIMESTAMP
+            WHERE id=@id RETURNING recurring_item_id
+            """;
+        var itemId = await PostgreSqlQuerier.ExecuteScalarAsync<int>(sql, new()
+        {
+            ["id"] = id,
+            ["date"] = request.DueDate,
+            ["amount"] = request.ExpectedAmount,
+            ["status"] = request.Status,
+            ["note"] = (object?)Clean(request.Note) ?? DBNull.Value,
+        });
+        if (itemId == 0) throw new KeyNotFoundException("Recurring occurrence was not found.");
+        return (await GetRecurringOccurrencesAsync(request.DueDate.AddDays(-1), request.DueDate.AddDays(1), Convert.ToInt32(itemId)))
+            .Single(x => x.Id == id);
+    }
+
+    public static async Task ReconcileRecurringTransactionsAsync(int accountId, DateOnly start, DateOnly end)
+    {
+        await EnsureRecurringOccurrencesAsync();
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            WITH candidates AS (
+                SELECT ro.id occurrence_id, t.id transaction_id, abs(t.amount) actual_amount,
+                    row_number() OVER (PARTITION BY t.id ORDER BY abs(t.transaction_date::date - ro.due_date), abs(abs(t.amount) - ro.expected_amount), ro.id) tx_rank,
+                    row_number() OVER (PARTITION BY ro.id ORDER BY abs(t.transaction_date::date - ro.due_date), abs(abs(t.amount) - ro.expected_amount), t.id) occurrence_rank
+                FROM recurring_occurrences ro
+                JOIN recurring_items r ON r.id=ro.recurring_item_id AND r.is_active
+                JOIN transactions t ON t.account_id=r.account_id AND NOT t.is_transfer
+                    AND t.transaction_date BETWEEN ro.due_date - r.date_window_days AND ro.due_date + r.date_window_days
+                    AND abs(abs(t.amount) - ro.expected_amount) <= r.amount_tolerance
+                    AND ((r.kind='bill' AND t.amount < 0) OR (r.kind='income' AND t.amount > 0))
+                    AND regexp_replace(lower(coalesce(t.payee, t.memo, '')), '[^a-z0-9]+', '', 'g') LIKE
+                        '%' || regexp_replace(lower(coalesce(r.match_text, r.name)), '[^a-z0-9]+', '', 'g') || '%'
+                WHERE ro.status='expected' AND r.account_id=@account AND t.transaction_date BETWEEN @start AND @end
+                    AND NOT EXISTS (SELECT 1 FROM recurring_occurrences linked WHERE linked.transaction_id=t.id)
+            )
+            UPDATE recurring_occurrences ro SET status='matched', transaction_id=c.transaction_id,
+                actual_amount=c.actual_amount, matched_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+            FROM candidates c WHERE ro.id=c.occurrence_id AND c.tx_rank=1 AND c.occurrence_rank=1
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("account", accountId);
+        command.Parameters.AddWithValue("start", start.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("end", end.ToDateTime(TimeOnly.MinValue));
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task RefreshRecurringOccurrencesAsync(int recurringItemId)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var delete = new NpgsqlCommand(
+            "DELETE FROM recurring_occurrences WHERE recurring_item_id=@id AND status IN ('expected', 'skipped')", connection, transaction))
+        {
+            delete.Parameters.AddWithValue("id", recurringItemId);
+            await delete.ExecuteNonQueryAsync();
+        }
+        await PopulateRecurringOccurrencesAsync(connection, transaction, recurringItemId, true);
+        await transaction.CommitAsync();
+    }
+
+    private static async Task EnsureRecurringOccurrencesAsync()
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var ids = new List<int>();
+        await using (var command = new NpgsqlCommand("SELECT id FROM recurring_items WHERE is_active", connection, transaction))
+        await using (var reader = await command.ExecuteReaderAsync())
+            while (await reader.ReadAsync()) ids.Add(reader.GetInt32(0));
+        foreach (var id in ids) await PopulateRecurringOccurrencesAsync(connection, transaction, id, false);
+        await transaction.CommitAsync();
+    }
+
+    private static async Task PopulateRecurringOccurrencesAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int itemId, bool linkSource)
+    {
+        const string itemSql = "SELECT next_date, frequency, amount, source_transaction_id FROM recurring_items WHERE id=@id AND is_active";
+        DateOnly next;
+        string frequency;
+        decimal amount;
+        int? sourceTransactionId;
+        await using (var item = new NpgsqlCommand(itemSql, connection, transaction))
+        {
+            item.Parameters.AddWithValue("id", itemId);
+            await using var reader = await item.ExecuteReaderAsync();
+            if (!await reader.ReadAsync()) return;
+            next = DateOnly.FromDateTime(reader.GetDateTime(0));
+            frequency = reader.GetString(1);
+            amount = reader.GetDecimal(2);
+            sourceTransactionId = reader.IsDBNull(3) ? null : reader.GetInt32(3);
+        }
+        if (linkSource && sourceTransactionId.HasValue)
+        {
+            const string matchedSql = """
+                INSERT INTO recurring_occurrences (recurring_item_id, due_date, expected_amount, status, transaction_id, actual_amount, matched_at)
+                SELECT @item, t.transaction_date, abs(t.amount), 'matched', t.id, abs(t.amount), CURRENT_TIMESTAMP
+                FROM transactions t WHERE t.id=@transaction
+                ON CONFLICT DO NOTHING
+                """;
+            await using var matched = new NpgsqlCommand(matchedSql, connection, transaction);
+            matched.Parameters.AddWithValue("item", itemId);
+            matched.Parameters.AddWithValue("transaction", sourceTransactionId.Value);
+            await matched.ExecuteNonQueryAsync();
+        }
+        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        next = NormalizeNextDate(next, frequency, today.AddDays(-31));
+        var horizon = today.AddMonths(18);
+        for (var occurrence = 0; ; occurrence++)
+        {
+            var date = OccurrenceDate(next, frequency, occurrence);
+            if (date > horizon) break;
+            await using var insert = new NpgsqlCommand(
+                "INSERT INTO recurring_occurrences (recurring_item_id, due_date, expected_amount) VALUES (@item, @date, @amount) ON CONFLICT DO NOTHING",
+                connection, transaction);
+            insert.Parameters.AddWithValue("item", itemId);
+            insert.Parameters.AddWithValue("date", date.ToDateTime(TimeOnly.MinValue));
+            insert.Parameters.AddWithValue("amount", amount);
+            await insert.ExecuteNonQueryAsync();
+        }
+
     }
 
     public static async Task<bool> DeleteRecurringItemAsync(int id) =>
@@ -381,8 +630,8 @@ public static class FinovaDataService
     public static async Task<IReadOnlyList<AccountSafetyDto>> GetAccountSafetyAsync()
     {
         var accounts = await GetAccountsAsync();
-        var recurring = await GetRecurringItemsAsync();
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var occurrences = await GetRecurringOccurrencesAsync(today.AddDays(-31), today.AddDays(400));
         var results = new List<AccountSafetyDto>();
         foreach (var account in accounts)
         {
@@ -393,13 +642,11 @@ public static class FinovaDataService
                     0, 0, today.AddDays(30), 0, 0));
                 continue;
             }
-            var accountItems = recurring.Where(r => r.AccountId == account.Id).ToList();
-            var nextIncome = accountItems.Where(r => r.Kind == "income")
-                .Select(r => NormalizeNextDate(r.NextDate, r.Frequency, today))
-                .OrderBy(d => d).Select(d => (DateOnly?)d).FirstOrDefault();
+            var accountOccurrences = occurrences.Where(o => o.AccountId == account.Id && o.Status == "expected").ToList();
+            var nextIncome = accountOccurrences.Where(o => o.Kind == "income" && o.DueDate >= today)
+                .OrderBy(o => o.DueDate).Select(o => (DateOnly?)o.DueDate).FirstOrDefault();
             var horizon = nextIncome?.AddDays(-1) ?? today.AddDays(30);
-            var bills = accountItems.Where(r => r.Kind == "bill")
-                .Sum(r => SumOccurrences(r.Amount, NormalizeNextDate(r.NextDate, r.Frequency, today), r.Frequency, horizon));
+            var bills = accountOccurrences.Where(o => o.Kind == "bill" && o.DueDate <= horizon).Sum(o => o.ExpectedAmount);
             var calculated = FinanceMath.CalculateSafety(account.Balance, account.SafeZoneAmount, bills);
             results.Add(new(account.Id, account.Name, account.AccountType, account.Balance, 0, null, null, null, account.SafeZoneAmount, bills, horizon,
                 calculated.SafeToSpend, calculated.Shortfall));
@@ -581,6 +828,7 @@ public static class FinovaDataService
 
     public static async Task<IReadOnlyList<BudgetDto>> GetBudgetsAsync(DateOnly? requestedMonth = null)
     {
+        await EnsureRecurringOccurrencesAsync();
         var month = requestedMonth.HasValue ? new DateOnly(requestedMonth.Value.Year, requestedMonth.Value.Month, 1) : new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
         var nextMonth = month.AddMonths(1);
         var previousMonth = month.AddMonths(-1);
@@ -591,6 +839,10 @@ public static class FinovaDataService
                 coalesce((SELECT sum(abs(t.amount)) FROM transactions t JOIN accounts a ON a.id=t.account_id
                     WHERE t.category_id=b.category_id AND t.amount < 0 AND NOT t.is_transfer AND NOT a.is_archived
                     AND t.transaction_date >= @month AND t.transaction_date < @next_month), 0),
+                coalesce((SELECT sum(ro.expected_amount) FROM recurring_occurrences ro
+                    JOIN recurring_items r ON r.id=ro.recurring_item_id
+                    WHERE r.category_id=b.category_id AND r.kind='bill' AND r.is_active AND ro.status='expected'
+                    AND ro.due_date >= @month AND ro.due_date < @next_month), 0),
                 coalesce((SELECT bm.base_amount + bm.rollover_in - bm.spent_amount FROM budget_months bm
                     WHERE bm.budget_id=b.id AND bm.month=@previous_month), 0)
             FROM budget_definitions b JOIN categories c ON c.id=b.category_id
@@ -600,17 +852,17 @@ public static class FinovaDataService
         command.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("next_month", nextMonth.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("previous_month", previousMonth.ToDateTime(TimeOnly.MinValue));
-        var raw = new List<(int Id, int CategoryId, string Name, string Icon, string Color, decimal Amount, bool Rollover, decimal Spent, decimal PriorRemaining)>();
+        var raw = new List<(int Id, int CategoryId, string Name, string Icon, string Color, decimal Amount, bool Rollover, decimal Spent, decimal Scheduled, decimal PriorRemaining)>();
         await using (var reader = await command.ExecuteReaderAsync())
         {
-            while (await reader.ReadAsync()) raw.Add((reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetDecimal(5), reader.GetBoolean(6), reader.GetDecimal(7), reader.GetDecimal(8)));
+            while (await reader.ReadAsync()) raw.Add((reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetDecimal(5), reader.GetBoolean(6), reader.GetDecimal(7), reader.GetDecimal(8), reader.GetDecimal(9)));
         }
         var result = new List<BudgetDto>();
         foreach (var item in raw)
         {
             var calculated = FinanceMath.CalculateBudget(item.Amount, item.Rollover, item.PriorRemaining, item.Spent);
             result.Add(new(item.Id, item.CategoryId, item.Name, item.Icon, item.Color, item.Amount, item.Rollover,
-                calculated.RolloverIn, calculated.Available, item.Spent, calculated.Remaining, calculated.ProgressPercent));
+                calculated.RolloverIn, calculated.Available, item.Spent, item.Scheduled, calculated.Remaining - item.Scheduled, calculated.Remaining, calculated.ProgressPercent));
             const string snapshotSql = """
                 INSERT INTO budget_months (budget_id, month, base_amount, rollover_in, spent_amount)
                 VALUES (@budget, @month, @base, @rollover, @spent)
@@ -804,12 +1056,15 @@ public static class FinovaDataService
         reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetString(7),
         reader.IsDBNull(8) ? null : reader.GetString(8), reader.IsDBNull(9) ? null : reader.GetString(9),
         reader.IsDBNull(10) ? null : reader.GetInt32(10), reader.GetString(11), reader.GetString(12), reader.GetBoolean(13),
-        reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetDecimal(15));
+        reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetDecimal(15),
+        reader.IsDBNull(16) ? null : reader.GetInt32(16));
 
     private static RecurringItemDto ReadRecurring(NpgsqlDataReader reader) => new(
         reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), reader.GetString(4),
         reader.IsDBNull(5) ? null : reader.GetInt32(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.GetDecimal(7),
-        reader.GetString(8), DateOnly.FromDateTime(reader.GetDateTime(9)), reader.GetString(10), reader.GetBoolean(11));
+        reader.GetString(8), DateOnly.FromDateTime(reader.GetDateTime(9)), reader.GetString(10), reader.GetBoolean(11),
+        reader.IsDBNull(12) ? null : reader.GetString(12), reader.GetDecimal(13), reader.GetInt16(14), reader.GetString(15),
+        reader.IsDBNull(16) ? null : DateOnly.FromDateTime(reader.GetDateTime(16)));
 
     private static void AddTransactionFilters(NpgsqlCommand command, int? accountId, int? categoryId, string? search, DateOnly? start, DateOnly? end)
     {
@@ -835,23 +1090,31 @@ public static class FinovaDataService
     private static decimal SumOccurrences(decimal amount, DateOnly next, string frequency, DateOnly horizon)
     {
         var total = 0m;
-        for (var date = next; date <= horizon; date = Advance(date, frequency)) total += amount;
+        for (var occurrence = 0; ; occurrence++)
+        {
+            var date = OccurrenceDate(next, frequency, occurrence);
+            if (date > horizon) break;
+            total += amount;
+        }
         return total;
     }
 
     private static DateOnly NormalizeNextDate(DateOnly date, string frequency, DateOnly today)
     {
-        while (date < today) date = Advance(date, frequency);
-        return date;
+        for (var occurrence = 0; ; occurrence++)
+        {
+            var candidate = OccurrenceDate(date, frequency, occurrence);
+            if (candidate >= today) return candidate;
+        }
     }
 
-    private static DateOnly Advance(DateOnly date, string frequency) => frequency switch
+    private static DateOnly OccurrenceDate(DateOnly anchor, string frequency, int occurrence) => frequency switch
     {
-        "weekly" => date.AddDays(7),
-        "fortnightly" => date.AddDays(14),
-        "quarterly" => date.AddMonths(3),
-        "yearly" => date.AddYears(1),
-        _ => date.AddMonths(1),
+        "weekly" => anchor.AddDays(7 * occurrence),
+        "fortnightly" => anchor.AddDays(14 * occurrence),
+        "quarterly" => anchor.AddMonths(3 * occurrence),
+        "yearly" => anchor.AddYears(occurrence),
+        _ => anchor.AddMonths(occurrence),
     };
 
     private static string? FrequencyFromGap(double days) => days switch
@@ -879,6 +1142,8 @@ public static class FinovaDataService
         if (string.IsNullOrWhiteSpace(request.Name) || request.Amount <= 0) throw new ArgumentException("Name and positive amount are required.");
         if (request.Kind is not ("bill" or "income")) throw new ArgumentException("Recurring kind must be bill or income.");
         if (!Frequencies.Contains(request.Frequency)) throw new ArgumentException("Unsupported frequency.");
+        if (request.AmountTolerance < 0) throw new ArgumentException("Amount tolerance cannot be negative.");
+        if (request.DateWindowDays is < 0 or > 31) throw new ArgumentException("Date window must be between 0 and 31 days.");
     }
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

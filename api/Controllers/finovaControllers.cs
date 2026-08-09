@@ -93,6 +93,24 @@ public sealed class TransactionsController : ControllerBase
         }
     }
 
+    [HttpPost("{id:int}/recurring")]
+    public async Task<ActionResult<RecurringItemDto>> MarkRecurring(int id, MarkTransactionRecurringRequest request)
+    {
+        try
+        {
+            var item = await FinovaDataService.MarkTransactionRecurringAsync(id, request);
+            return Created($"/plan/recurring/{item.Id}", item);
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+    }
+
     [HttpPost("import")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<IActionResult> Import([FromForm] OfxUploadRequest request)
@@ -104,6 +122,7 @@ public sealed class TransactionsController : ControllerBase
             var parsed = FinancialFileParserService.Parse(stream, request.OfxContent.FileName);
             if (parsed.Count == 0) return BadRequest(new { error = "No valid transactions found in the file." });
             var inserted = await GenericDataService.FilterAndInsertTransactionsAsync(parsed, request.AccountId);
+            await FinovaDataService.ReconcileRecurringTransactionsAsync(request.AccountId, parsed.Min(x => DateOnly.FromDateTime(x.Date)), parsed.Max(x => DateOnly.FromDateTime(x.Date)));
             return Ok(new { success = true, imported = inserted.Count, skipped = parsed.Count - inserted.Count });
         }
         catch (Exception exception) when (exception is InvalidDataException or NotSupportedException or ArgumentException)
@@ -205,6 +224,28 @@ public sealed class PlanController : ControllerBase
     [HttpDelete("recurring/{id:int}")]
     public async Task<IActionResult> DeleteRecurring(int id) =>
         await FinovaDataService.DeleteRecurringItemAsync(id) ? NoContent() : NotFound();
+
+    [HttpGet("occurrences")]
+    public async Task<ActionResult<IReadOnlyList<RecurringOccurrenceDto>>> Occurrences(
+        [FromQuery] DateOnly? start = null, [FromQuery] DateOnly? end = null, [FromQuery] int? recurringItemId = null) =>
+        Ok(await FinovaDataService.GetRecurringOccurrencesAsync(start, end, recurringItemId));
+
+    [HttpPut("occurrences/{id:int}")]
+    public async Task<ActionResult<RecurringOccurrenceDto>> PutOccurrence(int id, UpdateRecurringOccurrenceRequest request)
+    {
+        try
+        {
+            return Ok(await FinovaDataService.UpdateRecurringOccurrenceAsync(id, request));
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (ArgumentException exception)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
+    }
 
     [HttpGet("suggestions")]
     public async Task<ActionResult<IReadOnlyList<RecurringSuggestionDto>>> Suggestions() =>

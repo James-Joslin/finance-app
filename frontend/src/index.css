@@ -322,6 +322,13 @@ kbd { font: inherit; font-size: .62rem; color: var(--text-muted); background: va
 .recurring-row > span:nth-child(3) { align-items: flex-end; }
 .recurring-row strong { font-size: .68rem; }
 .recurring-row small { color: var(--text-muted); font-size: .56rem; }
+.recurring-actions { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; }
+.recurring-actions .icon-button, .transaction-action .icon-button { width: 29px; height: 29px; }
+.recurring-linked { display: inline-flex; align-items: center; gap: .25rem; color: var(--mint); font-size: .52rem; white-space: nowrap; }
+.recurring-linked svg { width: .8rem; height: .8rem; }
+.transaction-action { width: 42px; text-align: right; }
+.recurring-editor-actions { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; }
+.button.danger { color: var(--danger); }
 .recurring-icon.bill { color: var(--warning); background: var(--warning-soft); }
 .recurring-icon.income { color: var(--mint); background: var(--mint-soft); }
 .suggestions-card { background: linear-gradient(135deg, var(--surface), var(--surface-brand)); }
@@ -552,6 +559,10 @@ kbd { font: inherit; font-size: .62rem; color: var(--text-muted); background: va
     .mobile-transaction small { color: var(--text-muted); font-size: .5rem; }
     .mobile-transaction strong { font-size: .63rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .mobile-transaction em { color: var(--text-muted); font-size: .5rem; font-style: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .mobile-transaction-amount { display: flex; flex-direction: column; align-items: flex-end; gap: .3rem; }
+    .mobile-transaction-amount .recurring-linked span { display: none; }
+    .mobile-transaction-amount .icon-button { width: 28px; height: 28px; }
+    .recurring-actions .pill { display: inline-flex; }
     .pagination { flex-direction: column; gap: .4rem; }
     .safety-grid, .budget-grid, .suggestion-grid, .goals-grid { grid-template-columns: 1fr; }
     .recurring-row { grid-template-columns: 34px 1fr auto; padding: .55rem 0; }
