@@ -60,6 +60,10 @@ public sealed class CategoriesController : ControllerBase
 [Route("transactions")]
 public sealed class TransactionsController : ControllerBase
 {
+    [HttpGet("type-codes")]
+    public async Task<ActionResult<IReadOnlyList<TransactionTypeCodeDto>>> GetTypeCodes() =>
+        Ok(await FinovaDataService.GetTransactionTypeCodesAsync());
+
     [HttpGet]
     public async Task<ActionResult<TransactionPageDto>> Get(
         [FromQuery] int? accountId, [FromQuery] int? categoryId, [FromQuery] string? search,
@@ -85,11 +89,19 @@ public sealed class TransactionsController : ControllerBase
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<IActionResult> Import([FromForm] OfxUploadRequest request)
     {
-        using var stream = request.OfxContent.OpenReadStream();
-        var parsed = FinancialFileParserService.Parse(stream, request.OfxContent.FileName);
-        if (parsed.Count == 0) return BadRequest(new { error = "No valid transactions found in the file." });
-        var inserted = await GenericDataService.FilterAndInsertTransactionsAsync(parsed, request.AccountId);
-        return Ok(new { success = true, imported = inserted.Count, skipped = parsed.Count - inserted.Count });
+        try
+        {
+            if (request.OfxContent.Length == 0) return BadRequest(new { error = "The uploaded file is empty." });
+            using var stream = request.OfxContent.OpenReadStream();
+            var parsed = FinancialFileParserService.Parse(stream, request.OfxContent.FileName);
+            if (parsed.Count == 0) return BadRequest(new { error = "No valid transactions found in the file." });
+            var inserted = await GenericDataService.FilterAndInsertTransactionsAsync(parsed, request.AccountId);
+            return Ok(new { success = true, imported = inserted.Count, skipped = parsed.Count - inserted.Count });
+        }
+        catch (Exception exception) when (exception is InvalidDataException or NotSupportedException or ArgumentException)
+        {
+            return BadRequest(new { error = exception.Message });
+        }
     }
 
     [HttpGet("export")]

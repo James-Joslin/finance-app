@@ -49,6 +49,14 @@ namespace financesApi.models
         public string? CheckNumber { get; set; }
     }
 
+    public class HalifaxPdfTransactionDto : TransactionDto
+    {
+        public required string FitId { get; set; }
+        public required string TransactionCode { get; set; }
+        public decimal StatementBalance { get; set; }
+        public string? Category { get; set; }
+    }
+
     public class OfxUploadRequest
     {
         public required IFormFile OfxContent { get; set; }
@@ -64,4 +72,3 @@ namespace financesApi.models
         public int? accountId { get; set; }
     }
 }
-

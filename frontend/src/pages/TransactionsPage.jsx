@@ -93,7 +93,7 @@ function TransactionTable({ items, categories }) {
                     <tbody>{items.map((item) => (
                         <tr key={item.id}>
                             <td>{shortDate(item.date)}</td>
-                            <td><div className="description-cell"><span className={'transaction-mark small ' + (isIncomeTransaction(item) ? 'income' : '')}><WalletCards /></span><span><strong>{item.payee || item.memo || 'Transaction'}</strong><small>{item.memo && item.payee ? item.memo : item.sourceFileType || 'Imported'}</small></span></div></td>
+                            <td><div className="description-cell"><span className={'transaction-mark small ' + (isIncomeTransaction(item) ? 'income' : '')}><WalletCards /></span><span><strong>{item.payee || item.memo || 'Transaction'}</strong><small>{transactionDetail(item)}</small></span></div></td>
                             <td><select className="table-select" value={item.categoryId || ''} onChange={(event) => updateCategory.mutate({ id: item.id, categoryId: Number(event.target.value), saveRule: true })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></td>
                             <td>{item.accountName}</td>
                             <td><Pill tone={item.status === 'completed' ? 'success' : 'info'}>{item.status}</Pill></td>
@@ -106,7 +106,7 @@ function TransactionTable({ items, categories }) {
                 {items.map((item) => (
                     <article className="mobile-transaction" key={item.id}>
                         <span className={'transaction-mark ' + (isIncomeTransaction(item) ? 'income' : '')}><WalletCards /></span>
-                        <span><small>{relativeDate(item.date)}</small><strong>{item.payee || item.memo || 'Transaction'}</strong><em>{item.categoryName} · {item.accountName}</em></span>
+                        <span><small>{relativeDate(item.date)}</small><strong>{item.payee || item.memo || 'Transaction'}</strong><em>{item.categoryName} · {item.accountName}{item.transactionTypeCode ? ` · ${item.transactionTypeCode}` : ''}</em></span>
                         <strong className={isIncomeTransaction(item) ? 'positive' : ''}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</strong>
                     </article>
                 ))}
@@ -117,6 +117,13 @@ function TransactionTable({ items, categories }) {
 
 function isIncomeTransaction(item) {
     return Number(item.amount) >= 0 && item.accountType !== 'credit';
+}
+
+function transactionDetail(item) {
+    const type = item.transactionTypeCode
+        ? `${item.transactionTypeCode}${item.transactionTypeMeaning ? ` — ${item.transactionTypeMeaning}` : ''}`
+        : null;
+    return [type, item.memo && item.payee ? item.memo : null, item.sourceFileType || 'Imported'].filter(Boolean).join(' · ');
 }
 
 function Pagination({ page, totalPages, totalItems, onChange }) {
@@ -142,14 +149,14 @@ function ImportModal({ open, onClose, accounts }) {
         await mutation.mutateAsync(form);
     };
     return (
-        <Modal open={open} onClose={onClose} title="Import transactions" copy="Upload an OFX or QIF statement. Finova skips matching activity automatically.">
+        <Modal open={open} onClose={onClose} title="Import transactions" copy="Upload an OFX, QIF, or text-based Halifax PDF statement. Finova skips matching activity automatically.">
             <form className="form-stack" onSubmit={submit}>
                 <Field label="Account"><select required value={accountId} onChange={(event) => setAccountId(event.target.value)}><option value="">Choose an account</option>{accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}</select></Field>
                 <label className="file-drop">
                     <FileUp />
-                    <strong>{file?.name || 'Choose an OFX or QIF file'}</strong>
+                    <strong>{file?.name || 'Choose an OFX, QIF, or Halifax PDF'}</strong>
                     <small>Maximum 10 MB</small>
-                    <input type="file" accept=".ofx,.qif" onChange={(event) => setFile(event.target.files[0])} />
+                    <input type="file" accept=".ofx,.qif,.pdf,application/pdf" onChange={(event) => setFile(event.target.files[0])} />
                 </label>
                 {mutation.error && <p className="form-error">{apiError(mutation.error)}</p>}
                 {mutation.isSuccess && <p className="form-success">Imported {mutation.data.imported} transactions; skipped {mutation.data.skipped} duplicates.</p>}

@@ -99,45 +99,46 @@ namespace financesApi.services
             var existingTransactions = await PostgreSqlQuerier.ExecuteParameterisedQueryAsync(existingQuery, parameters);
 
             // Step 3: Build hash set for duplicate detection
-            var existingKeys = new HashSet<string>();
+            var existingFitIds = new HashSet<string>();
+            var existingCompositeKeys = new HashSet<string>();
+            var existingUnkeyedCompositeKeys = new HashSet<string>();
             foreach (DataRow row in existingTransactions.Rows)
             {
-                // Primary key: FitId for OFX transactions
                 var fitId = row["fitid"]?.ToString();
-                if (!string.IsNullOrEmpty(fitId))
-                {
-                    existingKeys.Add($"FITID:{fitId}");
-                }
-                
-                // Composite key for all transactions
-                var date = ((DateTime)row["transaction_date"]).ToString("yyyy-MM-dd");
-                var amount = row["amount"].ToString();
                 var payee = row["payee"]?.ToString() ?? "";
-                existingKeys.Add($"{date}|{amount}|{payee}");
+                var composite = TransactionCompositeKey((DateTime)row["transaction_date"], Convert.ToDecimal(row["amount"]), payee);
+                existingCompositeKeys.Add(composite);
+                if (!string.IsNullOrEmpty(fitId)) existingFitIds.Add(fitId);
+                else existingUnkeyedCompositeKeys.Add(composite);
             }
 
             // Step 4: Filter for new transactions
             var newTransactions = new List<TransactionDto>();
+            var incomingFitIds = new HashSet<string>();
+            var incomingUnkeyedCompositeKeys = new HashSet<string>();
             
             foreach (var tx in incomingTransactions)
             {
                 bool isDuplicate = false;
+                var compositeKey = TransactionCompositeKey(tx.Date, tx.Amount, tx.Payee);
                 
-                // Check OFX by FitId
-                if (tx is OfxTransactionDto ofxTx && !string.IsNullOrEmpty(ofxTx.FitId))
+                var incomingFitId = tx switch
                 {
-                    if (existingKeys.Contains($"FITID:{ofxTx.FitId}"))
-                    {
-                        isDuplicate = true;
-                        Console.WriteLine($"Duplicate OFX transaction found (FitId: {ofxTx.FitId})");
-                    }
+                    OfxTransactionDto ofx => ofx.FitId,
+                    HalifaxPdfTransactionDto pdf => pdf.FitId,
+                    _ => null
+                };
+                if (!string.IsNullOrEmpty(incomingFitId))
+                {
+                    isDuplicate = existingFitIds.Contains(incomingFitId)
+                        || existingUnkeyedCompositeKeys.Contains(compositeKey)
+                        || !incomingFitIds.Add(incomingFitId);
                 }
                 
                 // Check all transactions by composite key
-                if (!isDuplicate)
+                if (!isDuplicate && string.IsNullOrEmpty(incomingFitId))
                 {
-                    var compositeKey = $"{tx.Date:yyyy-MM-dd}|{tx.Amount}|{tx.Payee}";
-                    if (existingKeys.Contains(compositeKey))
+                    if (existingCompositeKeys.Contains(compositeKey) || !incomingUnkeyedCompositeKeys.Add(compositeKey))
                     {
                         isDuplicate = true;
                         Console.WriteLine($"Duplicate transaction found: {tx.Date:yyyy-MM-dd} - {tx.Amount} - {tx.Payee}");
@@ -158,6 +159,7 @@ namespace financesApi.services
                 {
                     OfxTransactionDto => "OFX",
                     QifTransactionDto => "QIF",
+                    HalifaxPdfTransactionDto => "PDF",
                     _ => "UNKNOWN"
                 };
                 
@@ -209,6 +211,13 @@ namespace financesApi.services
                     insertParams["@category"] = (object)qifTx.Category ?? DBNull.Value;
                     insertParams["@check_number"] = (object)qifTx.CheckNumber ?? DBNull.Value;
                 }
+                else if (tx is HalifaxPdfTransactionDto pdfTx)
+                {
+                    insertParams["@fitid"] = pdfTx.FitId;
+                    insertParams["@transaction_type"] = pdfTx.TransactionCode;
+                    insertParams["@category"] = (object?)pdfTx.Category ?? DBNull.Value;
+                    insertParams["@check_number"] = DBNull.Value;
+                }
                 else
                 {
                     insertParams["@fitid"] = DBNull.Value;
@@ -223,5 +232,8 @@ namespace financesApi.services
             Console.WriteLine($"Successfully inserted {newTransactions.Count} new transactions (skipped {incomingTransactions.Count - newTransactions.Count} duplicates)");
             return newTransactions;
         }
+
+        private static string TransactionCompositeKey(DateTime date, decimal amount, string? payee) =>
+            $"{date:yyyy-MM-dd}|{amount.ToString("0.################", System.Globalization.CultureInfo.InvariantCulture)}|{payee ?? string.Empty}";
     }
 }

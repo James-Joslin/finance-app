@@ -14,7 +14,7 @@ namespace financesApi.services
         public static List<TransactionDto> Parse(Stream fileStream, string fileName)
         {
             // Buffer the stream so we can read it multiple times if needed
-            var memoryStream = new MemoryStream();
+            using var memoryStream = new MemoryStream();
             fileStream.CopyTo(memoryStream);
             memoryStream.Position = 0;
             
@@ -41,13 +41,26 @@ namespace financesApi.services
                 case ".qif":
                     results = QifParser.Parse(memoryStream);
                     break;
+
+                case ".pdf":
+                    if (!HasPdfSignature(memoryStream))
+                        throw new InvalidDataException("The uploaded file has a .pdf name but is not a valid PDF file.");
+                    memoryStream.Position = 0;
+                    results = HalifaxPdfParser.Parse(memoryStream);
+                    break;
                     
                 default:
-                    throw new NotSupportedException($"File type {extension} is not supported. Please upload an OFX or QIF file.");
+                    throw new NotSupportedException($"File type {extension} is not supported. Please upload an OFX, QIF, or Halifax PDF file.");
             }
-            
-            memoryStream.Dispose();
             return results;
+        }
+
+        private static bool HasPdfSignature(Stream stream)
+        {
+            var signature = new byte[5];
+            var bytesRead = stream.Read(signature, 0, signature.Length);
+            stream.Position = 0;
+            return bytesRead == signature.Length && Encoding.ASCII.GetString(signature) == "%PDF-";
         }
         
         private static string DetectFileTypeByContent(Stream stream)
@@ -59,6 +72,8 @@ namespace financesApi.services
             
             if (bytesRead == 0)
                 throw new InvalidOperationException("File is empty");
+
+            if (bytesRead >= 5 && Encoding.ASCII.GetString(buffer, 0, 5) == "%PDF-") return ".pdf";
             
             var header = Encoding.UTF8.GetString(buffer, 0, bytesRead).ToUpper();
             

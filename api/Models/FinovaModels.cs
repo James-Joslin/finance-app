@@ -71,6 +71,11 @@ public sealed record CategoryDto(
     string ColorKey,
     bool IsSystem);
 
+public sealed record TransactionTypeCodeDto(
+    string Code,
+    string Meaning,
+    string Institution);
+
 public sealed record TransactionDtoV2(
     int Id,
     int AccountId,
@@ -80,6 +85,8 @@ public sealed record TransactionDtoV2(
     decimal Amount,
     string? Payee,
     string? Memo,
+    string? TransactionTypeCode,
+    string? TransactionTypeMeaning,
     int? CategoryId,
     string CategoryName,
     string Status,
@@ -243,4 +250,3 @@ public sealed record InsightsDto(
     decimal UncategorisedSpending);
 
 public sealed record SearchResultDto(string Type, int Id, string Title, string Subtitle, string Route);
-

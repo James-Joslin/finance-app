@@ -6,11 +6,14 @@ A private, responsive household finance hub for the Matthews Household. Finova c
 - Multiple prioritised savings goals with account-backed waterfall allocation and countdowns.
 - Recurring bills and paydays with transaction-pattern suggestions.
 - Monthly category budgets with optional positive rollover.
-- Typed transaction review, categorisation rules, OFX/QIF import, and CSV export.
+- Typed transaction review, categorisation rules, OFX/QIF and multi-page Halifax PDF import, and CSV export.
 - Household insights, global search, responsive layouts, and persistent light/dark themes.
 
 Finova is intentionally login-free for use on a trusted private network. It does not connect to banks
 or move money; balances come from opening values and imported transactions.
+
+Halifax PDF import supports statements containing selectable text. Image-only scans must be processed
+with OCR before import; Finova rejects them rather than silently importing incomplete financial data.
 
 The application is composed of:
 
@@ -193,4 +196,3 @@ curl --fail http://localhost:5173/api/status/health
 ```
 
 If a published development port is already in use, change its corresponding value in `.env.dev`.
-

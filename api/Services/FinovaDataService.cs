@@ -192,6 +192,18 @@ public static class FinovaDataService
         return new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5));
     }
 
+    public static async Task<IReadOnlyList<TransactionTypeCodeDto>> GetTransactionTypeCodesAsync()
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT code, meaning, institution FROM transaction_type_codes WHERE is_active ORDER BY code", connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        var rows = new List<TransactionTypeCodeDto>();
+        while (await reader.ReadAsync()) rows.Add(new(reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+        return rows;
+    }
+
     public static async Task<TransactionPageDto> GetTransactionsAsync(
         int? accountId, int? categoryId, string? search, string type, DateOnly? startDate, DateOnly? endDate, int page, int pageSize)
     {
@@ -217,10 +229,11 @@ public static class FinovaDataService
         var dataSql = $"""
             {cte}
             SELECT tx.id, tx.account_id, a.name, a.account_type, tx.transaction_date, tx.amount, tx.payee, tx.memo,
-                tx.category_id, coalesce(c.name, 'Uncategorised'), tx.status, tx.is_transfer,
+                tx.transaction_type, tc.meaning, tx.category_id, coalesce(c.name, 'Uncategorised'), tx.status, tx.is_transfer,
                 tx.source_file_type, tx.running_balance
             FROM tx JOIN accounts a ON a.id = tx.account_id
             LEFT JOIN categories c ON c.id = tx.category_id
+            LEFT JOIN transaction_type_codes tc ON tc.code = upper(tx.transaction_type) AND tc.is_active
             WHERE {where}
             ORDER BY tx.transaction_date DESC, tx.id DESC
             LIMIT @limit OFFSET @offset
@@ -754,8 +767,9 @@ public static class FinovaDataService
     private static TransactionDtoV2 ReadTransaction(NpgsqlDataReader reader) => new(
         reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3), DateOnly.FromDateTime(reader.GetDateTime(4)),
         reader.GetDecimal(5), reader.IsDBNull(6) ? null : reader.GetString(6), reader.IsDBNull(7) ? null : reader.GetString(7),
-        reader.IsDBNull(8) ? null : reader.GetInt32(8), reader.GetString(9), reader.GetString(10), reader.GetBoolean(11),
-        reader.IsDBNull(12) ? null : reader.GetString(12), reader.GetDecimal(13));
+        reader.IsDBNull(8) ? null : reader.GetString(8), reader.IsDBNull(9) ? null : reader.GetString(9),
+        reader.IsDBNull(10) ? null : reader.GetInt32(10), reader.GetString(11), reader.GetString(12), reader.GetBoolean(13),
+        reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetDecimal(15));
 
     private static RecurringItemDto ReadRecurring(NpgsqlDataReader reader) => new(
         reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), reader.GetString(4),
