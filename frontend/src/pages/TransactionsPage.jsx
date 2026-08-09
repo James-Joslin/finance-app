@@ -93,11 +93,11 @@ function TransactionTable({ items, categories }) {
                     <tbody>{items.map((item) => (
                         <tr key={item.id}>
                             <td>{shortDate(item.date)}</td>
-                            <td><div className="description-cell"><span className={'transaction-mark small ' + (item.amount >= 0 ? 'income' : '')}><WalletCards /></span><span><strong>{item.payee || item.memo || 'Transaction'}</strong><small>{item.memo && item.payee ? item.memo : item.sourceFileType || 'Imported'}</small></span></div></td>
+                            <td><div className="description-cell"><span className={'transaction-mark small ' + (isIncomeTransaction(item) ? 'income' : '')}><WalletCards /></span><span><strong>{item.payee || item.memo || 'Transaction'}</strong><small>{item.memo && item.payee ? item.memo : item.sourceFileType || 'Imported'}</small></span></div></td>
                             <td><select className="table-select" value={item.categoryId || ''} onChange={(event) => updateCategory.mutate({ id: item.id, categoryId: Number(event.target.value), saveRule: true })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></td>
                             <td>{item.accountName}</td>
                             <td><Pill tone={item.status === 'completed' ? 'success' : 'info'}>{item.status}</Pill></td>
-                            <td className={'align-right amount ' + (item.amount >= 0 ? 'positive' : '')}>{item.amount >= 0 ? '+' : ''}{money(item.amount)}</td>
+                            <td className={'align-right amount ' + (isIncomeTransaction(item) ? 'positive' : '')}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</td>
                         </tr>
                     ))}</tbody>
                 </table>
@@ -105,14 +105,18 @@ function TransactionTable({ items, categories }) {
             <div className="mobile-transaction-list">
                 {items.map((item) => (
                     <article className="mobile-transaction" key={item.id}>
-                        <span className={'transaction-mark ' + (item.amount >= 0 ? 'income' : '')}><WalletCards /></span>
+                        <span className={'transaction-mark ' + (isIncomeTransaction(item) ? 'income' : '')}><WalletCards /></span>
                         <span><small>{relativeDate(item.date)}</small><strong>{item.payee || item.memo || 'Transaction'}</strong><em>{item.categoryName} · {item.accountName}</em></span>
-                        <strong className={item.amount >= 0 ? 'positive' : ''}>{item.amount >= 0 ? '+' : ''}{money(item.amount)}</strong>
+                        <strong className={isIncomeTransaction(item) ? 'positive' : ''}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</strong>
                     </article>
                 ))}
             </div>
         </>
     );
+}
+
+function isIncomeTransaction(item) {
+    return Number(item.amount) >= 0 && item.accountType !== 'credit';
 }
 
 function Pagination({ page, totalPages, totalItems, onChange }) {

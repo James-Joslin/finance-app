@@ -14,7 +14,7 @@ export default function InsightsPage() {
     const [range, setRange] = useState('month');
     const dates = useMemo(() => rangeDates(range), [range]);
     const insights = useInsights(dates);
-    const data = insights.data;
+    const data = normaliseInsights(insights.data);
 
     return (
         <div className="page-stack">
@@ -26,7 +26,7 @@ export default function InsightsPage() {
                 <div className="insights-grid">
                     <Card className="insight-trend">
                         <div className="card-heading"><div><span className="eyebrow">Net balance trend</span><strong className="card-amount">{money(data?.totalBalance)}</strong></div><Pill tone={data?.netSavings >= 0 ? 'success' : 'danger'}>{data?.netSavings >= 0 ? <ArrowUpRight /> : <ArrowDownRight />}{money(Math.abs(data?.netSavings || 0))}</Pill></div>
-                        <ChartFrame empty={!data?.balanceTrend?.length}><ResponsiveContainer width="100%" height="100%"><AreaChart data={data?.balanceTrend || []}><defs><linearGradient id="insight-balance" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#168bff" stopOpacity=".28" /><stop offset="1" stopColor="#168bff" stopOpacity="0" /></linearGradient></defs><CartesianGrid stroke="var(--border)" vertical={false} /><XAxis dataKey="date" tickFormatter={(value) => shortDate(value).replace(/ \d{4}$/, '')} tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tickFormatter={compactMoney} tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => money(value)} contentStyle={tooltipStyle} /><Area type="monotone" dataKey="value" stroke="#168bff" strokeWidth={2.4} fill="url(#insight-balance)" /></AreaChart></ResponsiveContainer></ChartFrame>
+                        <ChartFrame empty={!data?.balanceTrend?.length}><ResponsiveContainer width="100%" height="100%"><AreaChart data={data?.balanceTrend || []}><defs><linearGradient id="insight-balance" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#168bff" stopOpacity=".28" /><stop offset="1" stopColor="#168bff" stopOpacity="0" /></linearGradient></defs><CartesianGrid stroke="var(--border)" vertical={false} /><XAxis dataKey="date" tickFormatter={(value) => shortDate(value).replace(/ \d{4}$/, '')} tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} /><YAxis tickFormatter={(value) => compactMoney(value)} tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => money(value)} contentStyle={tooltipStyle} /><Area type="monotone" dataKey="value" stroke="#168bff" strokeWidth={2.4} fill="url(#insight-balance)" /></AreaChart></ResponsiveContainer></ChartFrame>
                     </Card>
 
                     <Card className="spending-chart">
@@ -45,7 +45,7 @@ export default function InsightsPage() {
 
                     <Card className="cashflow-chart">
                         <div className="card-heading"><div><span className="eyebrow">Cash-flow rhythm</span><h3>Income and spending</h3></div></div>
-                        <ChartFrame empty={!data?.incomeTrend?.length && !data?.spendingTrend?.length}><ResponsiveContainer width="100%" height="100%"><BarChart data={mergeTrends(data?.incomeTrend, data?.spendingTrend)}><CartesianGrid stroke="var(--border)" vertical={false} /><XAxis dataKey="date" hide /><YAxis tickFormatter={compactMoney} tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => money(value)} contentStyle={tooltipStyle} /><Legend /><Bar name="Income" dataKey="income" fill="#2fcdb0" radius={[5, 5, 0, 0]} /><Bar name="Spending" dataKey="spending" fill="#168bff" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer></ChartFrame>
+                        <ChartFrame empty={!data?.incomeTrend?.length && !data?.spendingTrend?.length}><ResponsiveContainer width="100%" height="100%"><BarChart data={mergeTrends(data?.incomeTrend, data?.spendingTrend)}><CartesianGrid stroke="var(--border)" vertical={false} /><XAxis dataKey="date" hide /><YAxis tickFormatter={(value) => compactMoney(value)} tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} /><Tooltip formatter={(value) => money(value)} contentStyle={tooltipStyle} /><Legend /><Bar name="Income" dataKey="income" fill="#2fcdb0" radius={[5, 5, 0, 0]} /><Bar name="Spending" dataKey="spending" fill="#168bff" radius={[5, 5, 0, 0]} /></BarChart></ResponsiveContainer></ChartFrame>
                     </Card>
 
                     <Card className="insights-for-you">
@@ -107,7 +107,28 @@ function localIso(date) {
 
 function mergeTrends(income = [], spending = []) {
     const rows = new Map();
-    income.forEach((item) => rows.set(item.date, { date: item.date, income: item.value, spending: 0 }));
-    spending.forEach((item) => rows.set(item.date, { ...(rows.get(item.date) || { date: item.date, income: 0 }), spending: item.value }));
-    return [...rows.values()].sort((a, b) => a.date.localeCompare(b.date));
+    asArray(income).forEach((item) => rows.set(item.date, { date: item.date, income: item.value, spending: 0 }));
+    asArray(spending).forEach((item) => rows.set(item.date, { ...(rows.get(item.date) || { date: item.date, income: 0 }), spending: item.value }));
+    return [...rows.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
+
+function normaliseInsights(value) {
+    const source = value && typeof value === 'object' ? value : {};
+    return {
+        ...source,
+        totalBalance: finiteNumber(source.totalBalance),
+        income: finiteNumber(source.income),
+        spending: finiteNumber(source.spending),
+        netSavings: finiteNumber(source.netSavings),
+        savingsRate: finiteNumber(source.savingsRate),
+        goalProgressPercent: finiteNumber(source.goalProgressPercent),
+        uncategorisedSpending: finiteNumber(source.uncategorisedSpending),
+        balanceTrend: asArray(source.balanceTrend),
+        categorySpending: asArray(source.categorySpending),
+        incomeTrend: asArray(source.incomeTrend),
+        spendingTrend: asArray(source.spendingTrend),
+    };
+}
+
+function asArray(value) { return Array.isArray(value) ? value : []; }
+function finiteNumber(value) { return Number.isFinite(Number(value)) ? Number(value) : 0; }

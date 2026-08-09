@@ -2,7 +2,7 @@ import { createElement, useEffect, useMemo, useState } from 'react';
 import { Archive, Building2, Moon, Pencil, Plus, ShieldCheck, Sun, Users } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Card, Field, Modal, PageState, Pill } from '../components/ui';
-import { apiError, money } from '../lib/format';
+import { apiError, money, percent } from '../lib/format';
 import { mutations, queryKeys, useAccounts, useFinovaMutation, useSettings } from '../lib/queries';
 
 export default function SettingsPage() {
@@ -42,8 +42,8 @@ export default function SettingsPage() {
                                 <article key={account.id} className={account.isArchived ? 'archived' : ''}>
                                     <span className="account-dot account-0"><Building2 /></span>
                                     <span><strong>{account.name}</strong><small>{account.institution || (account.isShared ? [account.primaryHolderName, account.secondaryHolderName].filter(Boolean).join(' & ') : account.primaryHolderName || account.ownerName)} · {account.accountType}{account.isShared ? ' · joint' : ''}</small></span>
-                                    <span><strong>{money(account.balance)}</strong><small>{money(account.safeZoneAmount)} protected</small></span>
-                                    {account.includeInSafeToSpend ? <Pill tone="success">Included</Pill> : <Pill>Excluded</Pill>}
+                                    <AccountPosition account={account} />
+                                    {account.accountType === 'credit' ? <Pill tone="warning">Debt</Pill> : account.includeInSafeToSpend ? <Pill tone="success">Included</Pill> : <Pill>Excluded</Pill>}
                                     {account.isArchived && <Pill tone="warning">Archived</Pill>}
                                     <button className="icon-button" onClick={() => setAccountEditor(account)} aria-label={'Edit ' + account.name}><Pencil /></button>
                                 </article>
@@ -72,18 +72,31 @@ export default function SettingsPage() {
     );
 }
 
+function AccountPosition({ account }) {
+    if (account.accountType !== 'credit') {
+        return <span><strong>{money(account.balance)}</strong><small>{money(account.safeZoneAmount)} protected</small></span>;
+    }
+
+    const position = Number(account.debtBalance) > 0
+        ? `${money(account.debtBalance)} owed`
+        : Number(account.creditBalance) > 0 ? `${money(account.creditBalance)} in credit` : 'Settled';
+    return <span><strong>{position}</strong><small>{account.creditLimit
+        ? `${money(account.availableCredit)} available · ${percent(account.creditUtilizationPercent)} used`
+        : 'Add a credit limit to track utilisation'}</small></span>;
+}
+
 function AccountEditor({ open, account, onClose }) {
     const blank = useMemo(() => ({
         name: '', primaryHolderName: '', secondaryHolderName: '', isShared: false, accountType: 'current',
         institution: '', lastFour: '', openingBalance: 0, openingDate: new Date().toISOString().slice(0, 10),
-        safeZoneAmount: 0, includeInSafeToSpend: true, isArchived: false,
+        creditLimit: '', safeZoneAmount: 0, includeInSafeToSpend: true, isArchived: false,
     }), []);
     const [form, setForm] = useState(blank);
     useEffect(() => {
         setForm(account ? {
             name: account.name, isShared: account.isShared, accountType: account.accountType,
             primaryHolderName: account.primaryHolderName || account.ownerName || '', secondaryHolderName: account.secondaryHolderName || '',
-            institution: account.institution || '', lastFour: account.lastFour || '', safeZoneAmount: account.safeZoneAmount,
+            institution: account.institution || '', lastFour: account.lastFour || '', creditLimit: account.creditLimit ?? '', safeZoneAmount: account.safeZoneAmount,
             includeInSafeToSpend: account.includeInSafeToSpend, isArchived: account.isArchived,
         } : blank);
     }, [account, open, blank]);
@@ -93,9 +106,10 @@ function AccountEditor({ open, account, onClose }) {
     const submit = async (event) => {
         event.preventDefault();
         const body = {
-            ...form, openingBalance: Number(form.openingBalance || 0), safeZoneAmount: Number(form.safeZoneAmount || 0),
+            ...form, openingBalance: Number(form.openingBalance || 0), creditLimit: form.creditLimit === '' ? null : Number(form.creditLimit),
+            safeZoneAmount: form.accountType === 'credit' ? 0 : Number(form.safeZoneAmount || 0),
             secondaryHolderName: form.isShared ? form.secondaryHolderName : null,
-            includeInSafeToSpend: form.accountType === 'savings' ? form.includeInSafeToSpend : form.includeInSafeToSpend,
+            includeInSafeToSpend: form.accountType === 'credit' ? false : form.includeInSafeToSpend,
         };
         await save.mutateAsync(account ? { id: account.id, body } : body);
         onClose();
@@ -109,12 +123,16 @@ function AccountEditor({ open, account, onClose }) {
                     <Field label="First account holder"><input required autoComplete="name" value={form.primaryHolderName || ''} onChange={(event) => setForm({ ...form, primaryHolderName: event.target.value })} /></Field>
                     <Field label="Second account holder"><input required autoComplete="name" value={form.secondaryHolderName || ''} onChange={(event) => setForm({ ...form, secondaryHolderName: event.target.value })} /></Field>
                 </> : <Field label="Account holder name" className="span-2"><input required autoComplete="name" value={form.primaryHolderName || ''} onChange={(event) => setForm({ ...form, primaryHolderName: event.target.value })} /></Field>}
-                <Field label="Account type"><select value={form.accountType} onChange={(event) => setForm({ ...form, accountType: event.target.value, includeInSafeToSpend: event.target.value !== 'savings' })}><option value="current">Current</option><option value="savings">Savings</option><option value="credit">Credit</option><option value="cash">Cash</option><option value="investment">Investment</option></select></Field>
+                <Field label="Account type"><select value={form.accountType} onChange={(event) => setForm({ ...form, accountType: event.target.value, safeZoneAmount: event.target.value === 'credit' ? 0 : form.safeZoneAmount, includeInSafeToSpend: !['savings', 'credit'].includes(event.target.value) })}><option value="current">Current</option><option value="savings">Savings</option><option value="credit">Credit card</option><option value="cash">Cash</option><option value="investment">Investment</option></select></Field>
                 <Field label="Institution"><input value={form.institution || ''} onChange={(event) => setForm({ ...form, institution: event.target.value })} /></Field>
                 <Field label="Last four digits"><input maxLength="4" inputMode="numeric" value={form.lastFour || ''} onChange={(event) => setForm({ ...form, lastFour: event.target.value.replace(/\D/g, '') })} /></Field>
-                <Field label="Safe-zone floor"><input type="number" min="0" step="0.01" value={form.safeZoneAmount || 0} onChange={(event) => setForm({ ...form, safeZoneAmount: event.target.value })} /></Field>
-                {!account && <><Field label="Opening balance"><input type="number" step="0.01" value={form.openingBalance} onChange={(event) => setForm({ ...form, openingBalance: event.target.value })} /></Field><Field label="Opening date"><input required type="date" value={form.openingDate} onChange={(event) => setForm({ ...form, openingDate: event.target.value })} /></Field></>}
-                <label className="check-row span-2"><input type="checkbox" checked={form.includeInSafeToSpend || false} onChange={(event) => setForm({ ...form, includeInSafeToSpend: event.target.checked })} /><span><strong>Include in safe to spend</strong><small>Savings accounts are normally excluded.</small></span></label>
+                {form.accountType === 'credit'
+                    ? <Field label="Credit limit"><input type="number" min="0" step="0.01" value={form.creditLimit ?? ''} placeholder="Optional" onChange={(event) => setForm({ ...form, creditLimit: event.target.value })} /></Field>
+                    : <Field label="Safe-zone floor"><input type="number" min="0" step="0.01" value={form.safeZoneAmount || 0} onChange={(event) => setForm({ ...form, safeZoneAmount: event.target.value })} /></Field>}
+                {!account && <><Field label={form.accountType === 'credit' ? 'Current amount owed' : 'Opening balance'}><input type="number" min={form.accountType === 'credit' ? '0' : undefined} step="0.01" value={form.openingBalance} onChange={(event) => setForm({ ...form, openingBalance: event.target.value })} /></Field><Field label="Opening date"><input required type="date" value={form.openingDate} onChange={(event) => setForm({ ...form, openingDate: event.target.value })} /></Field></>}
+                {form.accountType === 'credit'
+                    ? <div className="check-row span-2"><ShieldCheck /><span><strong>Tracked as household debt</strong><small>Credit cards never increase safe-to-spend or fund savings goals. Purchases increase the amount owed; repayments reduce it.</small></span></div>
+                    : <label className="check-row span-2"><input type="checkbox" checked={form.includeInSafeToSpend || false} onChange={(event) => setForm({ ...form, includeInSafeToSpend: event.target.checked })} /><span><strong>Include in safe to spend</strong><small>Savings accounts are normally excluded.</small></span></label>}
                 {account && <label className="check-row danger-check span-2"><input type="checkbox" checked={form.isArchived || false} onChange={(event) => setForm({ ...form, isArchived: event.target.checked })} /><span><strong><Archive /> Archive account</strong><small>History remains intact but the account leaves active totals.</small></span></label>}
                 {save.error && <p className="form-error span-2">{apiError(save.error)}</p>}
                 <div className="modal-actions span-2"><button type="button" className="button secondary" onClick={onClose}>Cancel</button><button className="button" disabled={save.isPending}>{save.isPending ? 'Saving…' : 'Save account'}</button></div>

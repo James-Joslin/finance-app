@@ -38,7 +38,9 @@ function SafeToSpendCard({ data }) {
             <strong className="hero-amount">{money(data?.safeToSpend)}</strong>
             <p>Available after buffers and confirmed bills—not including money that has not arrived yet.</p>
             <div className="safe-breakdown">
-                <span><small>Total balance</small><strong>{money(data?.totalBalance)}</strong></span>
+                <span><small>Net position</small><strong>{money(data?.totalBalance)}</strong></span>
+                <span><small>Assets</small><strong>{money(data?.totalAssets)}</strong></span>
+                <span><small>Debt</small><strong>{money(data?.totalDebt)}</strong></span>
                 <span><small>Protected</small><strong>{money(data?.totalProtected)}</strong></span>
                 <span><small>Upcoming</small><strong>{money(data?.upcomingCommitments)}</strong></span>
             </div>
@@ -86,13 +88,26 @@ function AccountsCard({ accounts }) {
                 {accounts.slice(0, 5).map((account, index) => (
                     <div className="account-row" key={account.accountId}>
                         <span className={'account-dot account-' + (index % 5)}><Landmark /></span>
-                        <span><strong>{account.accountName}</strong><small>{money(account.bufferAmount)} protected</small></span>
-                        <span className="account-values"><strong>{money(account.balance)}</strong><small>{money(account.safeToSpend)} safe</small></span>
+                        <span><strong>{account.accountName}</strong><small>{account.accountType === 'credit' ? 'Credit card debt' : `${money(account.bufferAmount)} protected`}</small></span>
+                        <AccountSafetyValues account={account} />
                     </div>
                 ))}
             </div>
         </Card>
     );
+}
+
+function AccountSafetyValues({ account }) {
+    if (account.accountType !== 'credit') {
+        return <span className="account-values"><strong>{money(account.balance)}</strong><small>{money(account.safeToSpend)} safe</small></span>;
+    }
+
+    const position = Number(account.debtBalance) > 0
+        ? `${money(account.debtBalance)} owed`
+        : Number(account.balance) > 0 ? `${money(account.balance)} in credit` : 'Settled';
+    return <span className="account-values"><strong>{position}</strong><small>{account.creditLimit
+        ? `${money(account.availableCredit)} available · ${percent(account.creditUtilizationPercent)} used`
+        : 'Limit not set'}</small></span>;
 }
 
 function RecentTransactionsCard({ items }) {
@@ -103,16 +118,20 @@ function RecentTransactionsCard({ items }) {
                 {items.length === 0 && <p className="muted">No transactions yet.</p>}
                 {items.map((item) => (
                     <div className="transaction-row" key={item.id}>
-                        <span className={'transaction-mark ' + (item.amount >= 0 ? 'income' : '')}>
-                            {item.amount >= 0 ? <ArrowDownRight /> : <WalletCards />}
+                        <span className={'transaction-mark ' + (isIncomeTransaction(item) ? 'income' : '')}>
+                            {isIncomeTransaction(item) ? <ArrowDownRight /> : <WalletCards />}
                         </span>
                         <span><strong>{item.payee || item.memo || 'Transaction'}</strong><small>{item.categoryName} · {relativeDate(item.date)}</small></span>
-                        <strong className={item.amount >= 0 ? 'positive' : ''}>{item.amount >= 0 ? '+' : ''}{money(item.amount)}</strong>
+                        <strong className={isIncomeTransaction(item) ? 'positive' : ''}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</strong>
                     </div>
                 ))}
             </div>
         </Card>
     );
+}
+
+function isIncomeTransaction(item) {
+    return Number(item.amount) >= 0 && item.accountType !== 'credit';
 }
 
 function PriorityGoalCard({ goal }) {

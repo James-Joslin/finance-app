@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, CalendarClock, Check, Lightbulb, Plus, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, CalendarClock, Check, CreditCard, Lightbulb, Plus, ShieldCheck, Sparkles } from 'lucide-react';
 import { Card, Field, Modal, PageState, Pill, Progress } from '../components/ui';
 import { apiError, money, percent, relativeDate, shortDate } from '../lib/format';
 import {
@@ -58,6 +58,20 @@ export default function PlanPage() {
 }
 
 function SafetyCard({ account }) {
+    if (account.accountType === 'credit') {
+        const utilisation = Number(account.creditUtilizationPercent || 0);
+        const tone = utilisation >= 80 ? 'danger' : utilisation >= 50 ? 'warning' : 'info';
+        return (
+            <Card className="safety-card">
+                <div className="card-heading"><span className="account-dot account-0"><CreditCard /></span><Pill tone={tone}>{account.creditLimit ? `${percent(utilisation)} used` : 'Credit debt'}</Pill></div>
+                <h3>{account.accountName}</h3>
+                <strong className="card-amount">{money(account.debtBalance)} owed</strong>
+                <small>{account.creditLimit ? `${money(account.availableCredit)} of ${money(account.creditLimit)} credit available` : 'Add a credit limit in Settings to track utilisation'}</small>
+                {account.creditLimit && <Progress value={utilisation} tone={utilisation >= 80 ? 'danger' : 'brand'} label={account.accountName + ' credit utilisation'} />}
+                <div className="safety-legend"><span><i className="bills" />Debt {money(account.debtBalance)}</span>{Number(account.balance) > 0 && <span><i className="safe" />Credit balance {money(account.balance)}</span>}</div>
+            </Card>
+        );
+    }
     const healthy = Number(account.shortfall) === 0;
     return (
         <Card className="safety-card">
@@ -142,9 +156,13 @@ function RecurringModal({ open, onClose, accounts, categories }) {
         <Modal open={open} onClose={onClose} title="Add a recurring item" copy="Confirmed bills and income make your safe-to-spend figure more useful.">
             <form className="form-grid" onSubmit={submit}>
                 <Field label="Name" className="span-2"><input required value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="Mortgage, payday…" /></Field>
-                <Field label="Type"><select value={form.kind} onChange={(event) => setForm({ ...form, kind: event.target.value })}><option value="bill">Bill</option><option value="income">Income / payday</option></select></Field>
+                <Field label="Type"><select value={form.kind} onChange={(event) => {
+                    const kind = event.target.value;
+                    const selectedAccount = accounts.find((item) => String(item.id) === String(form.accountId));
+                    setForm({ ...form, kind, accountId: kind === 'income' && selectedAccount?.accountType === 'credit' ? '' : form.accountId });
+                }}><option value="bill">Bill</option><option value="income">Income / payday</option></select></Field>
                 <Field label="Amount"><input required min="0.01" step="0.01" type="number" value={form.amount} onChange={(event) => setForm({ ...form, amount: event.target.value })} /></Field>
-                <Field label="Account"><select required value={form.accountId} onChange={(event) => setForm({ ...form, accountId: event.target.value })}><option value="">Choose account</option>{accounts.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
+                <Field label="Account"><select required value={form.accountId} onChange={(event) => setForm({ ...form, accountId: event.target.value })}><option value="">Choose account</option>{accounts.filter((item) => form.kind === 'bill' || item.accountType !== 'credit').map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
                 <Field label="Category"><select value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}><option value="">No category</option>{categories.filter((item) => item.kind !== 'income' || form.kind === 'income').map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></Field>
                 <Field label="Frequency"><select value={form.frequency} onChange={(event) => setForm({ ...form, frequency: event.target.value })}><option value="weekly">Weekly</option><option value="fortnightly">Fortnightly</option><option value="monthly">Monthly</option><option value="quarterly">Quarterly</option><option value="yearly">Yearly</option></select></Field>
                 <Field label="Next date"><input required type="date" value={form.nextDate} onChange={(event) => setForm({ ...form, nextDate: event.target.value })} /></Field>
