@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowDownToLine, ArrowUpFromLine, CalendarClock, Check, CreditCard, Lightbulb, Pencil, Plus, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, CalendarClock, Check, ChevronDown, CreditCard, Lightbulb, Pencil, Plus, ShieldCheck, Sparkles } from 'lucide-react';
 import RecurringEditor from '../components/RecurringEditor';
 import OccurrenceEditor from '../components/OccurrenceEditor';
 import { Card, Field, Modal, PageState, Pill, Progress } from '../components/ui';
@@ -20,9 +20,14 @@ export default function PlanPage() {
     const [recurringEditor, setRecurringEditor] = useState(null);
     const [occurrenceEditor, setOccurrenceEditor] = useState(null);
     const [budgetOpen, setBudgetOpen] = useState(false);
+    const [upcomingOpen, setUpcomingOpen] = useState(false);
+    const [schedulesOpen, setSchedulesOpen] = useState(false);
 
     const loading = safety.isLoading || recurring.isLoading || occurrences.isLoading || budgets.isLoading;
     const error = safety.error || recurring.error || occurrences.error || budgets.error;
+    const upcomingItems = (occurrences.data || []).filter((item) => item.status === 'expected').slice(0, 12);
+    const recurringItems = recurring.data || [];
+    const activeRecurringCount = recurringItems.filter((item) => item.isActive).length;
 
     return (
         <PageState loading={loading} error={error && apiError(error)}>
@@ -35,20 +40,34 @@ export default function PlanPage() {
                     {(safety.data || []).length === 0 && <Card className="empty-inline"><ShieldCheck /><p>Add an account in Settings to configure its safe zone.</p></Card>}
                 </div>
 
-                <section className="section-heading">
-                    <div><span className="eyebrow">Cash-flow calendar</span><h2>Upcoming bills and paydays</h2><p>Only unmatched confirmed occurrences change safe to spend.</p></div>
-                </section>
-                <Card className="plan-list-card">
-                    <OccurrenceTimeline items={(occurrences.data || []).filter((item) => item.status === 'expected').slice(0, 12)} onEdit={setOccurrenceEditor} />
-                </Card>
+                <CollapsiblePlanSection
+                    id="upcoming-cash-flow"
+                    eyebrow="Cash-flow calendar"
+                    title="Upcoming bills and paydays"
+                    copy="Only unmatched confirmed occurrences change safe to spend."
+                    summary={upcomingItems.length === 0 ? 'Nothing upcoming' : `${upcomingItems.length} upcoming`}
+                    open={upcomingOpen}
+                    onToggle={() => setUpcomingOpen((value) => !value)}
+                >
+                    <Card className="plan-list-card">
+                        <OccurrenceTimeline items={upcomingItems} onEdit={setOccurrenceEditor} />
+                    </Card>
+                </CollapsiblePlanSection>
 
-                <section className="section-heading">
-                    <div><span className="eyebrow">Recurring rules</span><h2>Flexible household schedules</h2><p>Edit the rule for every future occurrence, or pause it without losing its history.</p></div>
-                    <button className="button" onClick={() => setRecurringEditor('new')}><Plus /> Add recurring</button>
-                </section>
-                <Card className="plan-list-card">
-                    <RecurringTimeline items={recurring.data || []} onEdit={setRecurringEditor} />
-                </Card>
+                <CollapsiblePlanSection
+                    id="recurring-household-schedules"
+                    eyebrow="Recurring rules"
+                    title="Flexible household schedules"
+                    copy="Edit the rule for every future occurrence, or pause it without losing its history."
+                    summary={recurringItems.length === 0 ? 'No schedules' : `${activeRecurringCount} active`}
+                    open={schedulesOpen}
+                    onToggle={() => setSchedulesOpen((value) => !value)}
+                    actions={<button className="button" onClick={() => setRecurringEditor('new')}><Plus /> Add recurring</button>}
+                >
+                    <Card className="plan-list-card">
+                        <RecurringTimeline items={recurringItems} onEdit={setRecurringEditor} />
+                    </Card>
+                </CollapsiblePlanSection>
 
                 {(suggestions.data || []).length > 0 && <Suggestions items={suggestions.data} />}
 
@@ -66,6 +85,31 @@ export default function PlanPage() {
                 <BudgetModal open={Boolean(budgetOpen)} budget={typeof budgetOpen === 'object' ? budgetOpen : null} onClose={() => setBudgetOpen(false)} categories={categories.data || []} />
             </div>
         </PageState>
+    );
+}
+
+function CollapsiblePlanSection({ id, eyebrow, title, copy, summary, open, onToggle, actions, children }) {
+    return (
+        <section className="plan-collapsible-section">
+            <div className="section-heading plan-collapsible-heading">
+                <button
+                    type="button"
+                    className="plan-collapse-trigger"
+                    aria-expanded={open}
+                    aria-controls={id}
+                    onClick={onToggle}
+                >
+                    <span className="plan-collapse-copy">
+                        <span className="eyebrow">{eyebrow}</span>
+                        <span className="plan-collapse-title-row"><h2>{title}</h2><Pill>{summary}</Pill></span>
+                        <span className="plan-collapse-description">{copy}</span>
+                    </span>
+                    <ChevronDown className="plan-collapse-chevron" aria-hidden="true" />
+                </button>
+                {actions && <div className="plan-collapsible-actions">{actions}</div>}
+            </div>
+            <div id={id} hidden={!open}>{children}</div>
+        </section>
     );
 }
 
