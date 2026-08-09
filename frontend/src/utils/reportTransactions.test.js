@@ -1,5 +1,4 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { expect, test } from 'vitest';
 
 import { buildReportTransactions } from './reportTransactions.js';
 
@@ -15,27 +14,16 @@ test('sorts newest first and keeps chronological balances on the correct rows', 
 
     const transactions = buildReportTransactions(headers, rows);
 
-    assert.deepEqual(
-        transactions.map((transaction) => transaction.id),
-        ['104', '103', '102', '101']
-    );
-    assert.deepEqual(
-        transactions.map((transaction) => transaction.runningBalance),
-        [75, 85, 80, 100]
-    );
-    assert.deepEqual(
-        transactions.map((transaction) => transaction.amount),
-        [-10, 5, -20, 100]
-    );
+    expect(transactions.map((transaction) => transaction.id)).toEqual(['104', '103', '102', '101']);
+    expect(transactions.map((transaction) => transaction.runningBalance)).toEqual([75, 85, 80, 100]);
+    expect(transactions.map((transaction) => transaction.amount)).toEqual([-10, 5, -20, 100]);
 });
 
 test('rejects locale-dependent or invalid dates instead of silently mis-sorting', () => {
-    assert.throws(
-        () =>
-            buildReportTransactions(
-                ['id', 'transaction_date', 'amount'],
-                [['1', 'not-a-date', '10.00']]
-            ),
-        /Invalid transaction date/
-    );
+    expect(() =>
+        buildReportTransactions(
+            ['id', 'transaction_date', 'amount'],
+            [['1', 'not-a-date', '10.00']]
+        )
+    ).toThrow(/Invalid transaction date/);
 });
