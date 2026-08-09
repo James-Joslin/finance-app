@@ -48,6 +48,56 @@ public sealed class HalifaxPdfParserTests
         Assert.Contains("not a valid PDF", error.Message);
     }
 
+    [Fact]
+    public void ParsesAStatementWhenTheColumnHeaderIsSplitAcrossLines()
+    {
+        var builder = new PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+        var page = builder.AddPage(PageSize.A4);
+        page.AddText("HALIFAX", 14, new PdfPoint(50, 810), font);
+        Add(page, font, "Date", 50, 720);
+        Add(page, font, "Description", 120, 720);
+        Add(page, font, "Type", 270, 720);
+        Add(page, font, "Money In (£)", 374, 712);
+        Add(page, font, "Money Out (£)", 453, 712);
+        Add(page, font, "Balance (£)", 537, 712);
+        Add(page, font, "03Jul26", 50, 680);
+        Add(page, font, "HALIFAX SAVER", 120, 672);
+        Add(page, font, "FPI", 270, 675);
+        Add(page, font, "125.00", 340, 669);
+        Add(page, font, "625.00", 503, 673);
+        page.AddText("Transaction types", 10, new PdfPoint(50, 300), font);
+        page.AddText("BGC Bank Giro Credit     BP Bill Payments     CHG Charge", 8, new PdfPoint(50, 280), font);
+
+        using var stream = new MemoryStream(builder.Build());
+        var transaction = Assert.Single(FinancialFileParserService.Parse(stream, "statement.pdf"));
+
+        Assert.Equal(new DateTime(2026, 7, 3), transaction.Date);
+        Assert.Equal("HALIFAX SAVER", transaction.Payee);
+        Assert.Equal(125m, transaction.Amount);
+    }
+
+    [Fact]
+    public void IgnoresColumnHeadersRepeatedBeforeEveryTransaction()
+    {
+        var builder = new PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+        var page = builder.AddPage(PageSize.A4);
+        AddHeader(page, font);
+        AddRow(page, font, 690, "Date", "Description", "Type", "Money In (£)", "Money Out (£)", "Balance (£)");
+        AddRow(page, font, 680, "03 Aug 26.", "WATER", "DD", "", "10.00", "90.00");
+        AddRow(page, font, 665, "Date", "Description", "Type", "Money In (£)", "Money Out (£)", "Balance (£)");
+        AddRow(page, font, 655, "04 Aug 26.", "SAVINGS", "FPI", "20.00", "", "110.00");
+        page.AddText("Transaction types", 10, new PdfPoint(50, 300), font);
+
+        using var stream = new MemoryStream(builder.Build());
+        var transactions = FinancialFileParserService.Parse(stream, "statement.pdf");
+
+        Assert.Equal(2, transactions.Count);
+        Assert.Equal(-10m, transactions[0].Amount);
+        Assert.Equal(20m, transactions[1].Amount);
+    }
+
     private static byte[] BuildStatement()
     {
         var builder = new PdfDocumentBuilder();

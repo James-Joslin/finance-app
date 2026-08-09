@@ -192,6 +192,26 @@ public static class FinovaDataService
         return new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5));
     }
 
+    public static async Task<IReadOnlyList<TransactionRuleDto>> GetTransactionRulesAsync()
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT r.id, r.match_text, r.direction, r.category_id, c.name, r.priority, r.is_active
+            FROM transaction_rules r JOIN categories c ON c.id = r.category_id
+            ORDER BY r.match_text, r.direction
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        var rows = new List<TransactionRuleDto>();
+        while (await reader.ReadAsync()) rows.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2),
+            reader.GetInt32(3), reader.GetString(4), reader.GetInt32(5), reader.GetBoolean(6)));
+        return rows;
+    }
+
+    public static async Task<bool> DeleteTransactionRuleAsync(int id) =>
+        await PostgreSqlQuerier.ExecuteNonQueryAsync("DELETE FROM transaction_rules WHERE id = @id", new() { ["id"] = id }) > 0;
+
     public static async Task<IReadOnlyList<TransactionTypeCodeDto>> GetTransactionTypeCodesAsync()
     {
         await using var connection = PostgreSqlQuerier.BuildConnection();
@@ -274,8 +294,23 @@ public static class FinovaDataService
             if (request.SaveRule)
             {
                 const string ruleSql = """
-                    INSERT INTO transaction_rules (match_text, category_id)
-                    SELECT lower(trim(coalesce(payee, memo))), @category FROM transactions WHERE id = @id
+                    WITH source AS (
+                        SELECT lower(trim(coalesce(nullif(payee, ''), memo))) AS reference_text,
+                            CASE WHEN amount >= 0 THEN 'in' ELSE 'out' END AS direction
+                        FROM transactions
+                        WHERE id = @id AND nullif(trim(coalesce(nullif(payee, ''), memo)), '') IS NOT NULL
+                    ), updated AS (
+                        UPDATE transaction_rules rule SET
+                            category_id = @category, is_active = true, updated_at = CURRENT_TIMESTAMP
+                        FROM source
+                        WHERE lower(trim(rule.match_text)) = source.reference_text
+                            AND rule.direction = source.direction
+                        RETURNING rule.id
+                    )
+                    INSERT INTO transaction_rules (match_text, direction, category_id)
+                    SELECT source.reference_text, source.direction, @category
+                    FROM source
+                    WHERE NOT EXISTS (SELECT 1 FROM updated)
                     """;
                 await using var rule = new NpgsqlCommand(ruleSql, connection, transaction);
                 rule.Parameters.AddWithValue("category", request.CategoryId);

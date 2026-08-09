@@ -48,6 +48,14 @@ public sealed class CategoriesController : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<CategoryDto>>> Get() => Ok(await FinovaDataService.GetCategoriesAsync());
 
+    [HttpGet("rules")]
+    public async Task<ActionResult<IReadOnlyList<TransactionRuleDto>>> GetRules() =>
+        Ok(await FinovaDataService.GetTransactionRulesAsync());
+
+    [HttpDelete("rules/{id:int}")]
+    public async Task<IActionResult> DeleteRule(int id) =>
+        await FinovaDataService.DeleteTransactionRuleAsync(id) ? NoContent() : NotFound();
+
     [HttpPost]
     public async Task<ActionResult<CategoryDto>> Post(CategoryDto request)
     {

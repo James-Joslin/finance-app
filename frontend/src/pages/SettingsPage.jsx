@@ -1,17 +1,19 @@
 import { createElement, useEffect, useMemo, useState } from 'react';
-import { Archive, Building2, Moon, Pencil, Plus, ShieldCheck, Sun, Users } from 'lucide-react';
+import { Archive, Building2, Moon, Pencil, Plus, ShieldCheck, Sun, Tags, Trash2, Users } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Card, Field, Modal, PageState, Pill } from '../components/ui';
 import { apiError, money, percent } from '../lib/format';
-import { mutations, queryKeys, useAccounts, useFinovaMutation, useSettings } from '../lib/queries';
+import { mutations, queryKeys, useAccounts, useFinovaMutation, useSettings, useTransactionRules } from '../lib/queries';
 
 export default function SettingsPage() {
     const settings = useSettings();
     const accounts = useAccounts(true);
+    const rules = useTransactionRules();
     const { preference, setPreference } = useTheme();
     const [household, setHousehold] = useState(null);
     const [accountEditor, setAccountEditor] = useState(false);
     const saveSettings = useFinovaMutation(mutations.saveSettings, [queryKeys.settings, queryKeys.dashboard]);
+    const deleteRule = useFinovaMutation(mutations.deleteTransactionRule, [queryKeys.rules]);
 
     useEffect(() => { if (settings.data) setHousehold(settings.data); }, [settings.data]);
 
@@ -21,7 +23,7 @@ export default function SettingsPage() {
     };
 
     return (
-        <PageState loading={settings.isLoading || accounts.isLoading} error={(settings.error || accounts.error) && apiError(settings.error || accounts.error)}>
+        <PageState loading={settings.isLoading || accounts.isLoading || rules.isLoading} error={(settings.error || accounts.error || rules.error) && apiError(settings.error || accounts.error || rules.error)}>
             <div className="settings-layout">
                 <div className="settings-main page-stack">
                     <Card>
@@ -49,6 +51,23 @@ export default function SettingsPage() {
                                 </article>
                             ))}
                         </div>
+                    </Card>
+
+                    <Card>
+                        <div className="settings-card-heading"><div><span className="settings-icon"><Tags /></span><span><h2>Automatic categories</h2><p>References Finova has learned when you categorise transactions.</p></span></div></div>
+                        {(rules.data || []).length === 0
+                            ? <p className="muted-copy">Change a transaction category and Finova will remember the reference for future imports.</p>
+                            : <div className="rule-list">
+                                {(rules.data || []).map((rule) => (
+                                    <article key={rule.id}>
+                                        <span className="settings-icon"><Tags /></span>
+                                        <span><strong>{rule.referenceText}</strong><small>{rule.direction === 'in' ? 'Money in from this reference' : rule.direction === 'out' ? 'Money out to this reference' : 'Money in or out with this reference'}</small></span>
+                                        <Pill tone="info">{rule.categoryName}</Pill>
+                                        <button className="icon-button" disabled={deleteRule.isPending} onClick={() => deleteRule.mutate(rule.id)} aria-label={'Forget automatic category for ' + rule.referenceText}><Trash2 /></button>
+                                    </article>
+                                ))}
+                            </div>}
+                        {deleteRule.error && <p className="form-error">{apiError(deleteRule.error)}</p>}
                     </Card>
                 </div>
 

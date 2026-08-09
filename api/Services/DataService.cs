@@ -167,8 +167,13 @@ namespace financesApi.services
                     WITH chosen_category AS (
                         SELECT coalesce(
                             (SELECT tr.category_id FROM transaction_rules tr
-                             WHERE tr.is_active AND lower(@payee::text) LIKE '%' || lower(tr.match_text) || '%'
-                             ORDER BY tr.priority, tr.id LIMIT 1),
+                             WHERE tr.is_active
+                               AND nullif(trim(tr.match_text), '') IS NOT NULL
+                               AND (tr.direction = 'any' OR tr.direction = CASE WHEN @amount >= 0 THEN 'in' ELSE 'out' END)
+                               AND lower(coalesce(@payee::text, @memo::text, '')) LIKE '%' || lower(trim(tr.match_text)) || '%'
+                             ORDER BY length(trim(tr.match_text)) DESC,
+                                CASE WHEN tr.direction = 'any' THEN 1 ELSE 0 END,
+                                tr.priority, tr.id LIMIT 1),
                             (SELECT c.id FROM categories c
                              WHERE lower(c.name) = lower(coalesce(@category::text, '')) LIMIT 1),
                             (SELECT c.id FROM categories c WHERE c.name = 'Uncategorised')

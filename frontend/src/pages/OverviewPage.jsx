@@ -5,19 +5,18 @@ import { GoalVisual } from '../components/GoalVisual';
 import { Card, PageState, Pill, Progress } from '../components/ui';
 import { money, percent, relativeDate, shortDate } from '../lib/format';
 import { useDashboard, useInsights } from '../lib/queries';
+import { overviewTrendRange } from '../utils/trendRange';
 
 export default function OverviewPage() {
     const dashboard = useDashboard();
-    const today = new Date();
-    const startDate = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
-    const endDate = today.toISOString().slice(0, 10);
-    const insights = useInsights({ startDate, endDate });
+    const trendRange = overviewTrendRange(dashboard.data?.recentTransactions);
+    const insights = useInsights(trendRange);
 
     return (
         <PageState loading={dashboard.isLoading} error={dashboard.error?.message}>
             <div className="overview-grid">
                 <SafeToSpendCard data={dashboard.data} />
-                <BalanceTrendCard data={insights.data} />
+                <BalanceTrendCard data={insights.data} range={trendRange} />
                 <AccountsCard accounts={dashboard.data?.accounts || []} />
                 <RecentTransactionsCard items={dashboard.data?.recentTransactions || []} />
                 <PriorityGoalCard goal={dashboard.data?.priorityGoal} />
@@ -50,15 +49,15 @@ function SafeToSpendCard({ data }) {
     );
 }
 
-function BalanceTrendCard({ data }) {
+function BalanceTrendCard({ data, range }) {
     const trend = data?.balanceTrend || [];
     return (
         <Card className="trend-card">
             <div className="card-heading">
-                <div><span className="eyebrow">Net balance trend</span><strong className="card-amount">{money(data?.totalBalance)}</strong></div>
+                <div><span className="eyebrow">Net balance trend</span><strong className="card-amount">{money(data?.totalBalance)}</strong><small>30 days ending {shortDate(range.endDate)}</small></div>
                 <Pill tone={Number(data?.netSavings) >= 0 ? 'success' : 'danger'}>
                     {Number(data?.netSavings) >= 0 ? <ArrowUpRight /> : <ArrowDownRight />}
-                    {money(Math.abs(Number(data?.netSavings || 0)))} this month
+                    {money(Math.abs(Number(data?.netSavings || 0)))} this period
                 </Pill>
             </div>
             <div className="mini-chart" aria-label="Balance trend chart">

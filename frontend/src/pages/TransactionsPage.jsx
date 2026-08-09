@@ -83,7 +83,7 @@ export default function TransactionsPage() {
 
 function TransactionTable({ items, categories }) {
     const updateCategory = useFinovaMutation(mutations.updateTransactionCategory, [
-        ['transactions'], queryKeys.dashboard, ['insights'], queryKeys.budgets,
+        ['transactions'], queryKeys.dashboard, ['insights'], queryKeys.budgets, queryKeys.rules,
     ]);
     return (
         <>
@@ -94,7 +94,7 @@ function TransactionTable({ items, categories }) {
                         <tr key={item.id}>
                             <td>{shortDate(item.date)}</td>
                             <td><div className="description-cell"><span className={'transaction-mark small ' + (isIncomeTransaction(item) ? 'income' : '')}><WalletCards /></span><span><strong>{item.payee || item.memo || 'Transaction'}</strong><small>{transactionDetail(item)}</small></span></div></td>
-                            <td><select className="table-select" value={item.categoryId || ''} onChange={(event) => updateCategory.mutate({ id: item.id, categoryId: Number(event.target.value), saveRule: true })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></td>
+                            <td><select className="table-select" title="Changing this category also updates the automatic rule for this reference." aria-label={'Category for ' + (item.payee || item.memo || 'transaction')} value={item.categoryId || ''} onChange={(event) => updateCategory.mutate({ id: item.id, categoryId: Number(event.target.value), saveRule: true })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></td>
                             <td>{item.accountName}</td>
                             <td><Pill tone={item.status === 'completed' ? 'success' : 'info'}>{item.status}</Pill></td>
                             <td className={'align-right amount ' + (isIncomeTransaction(item) ? 'positive' : '')}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</td>

@@ -103,6 +103,15 @@ public sealed record TransactionPageDto(
 
 public sealed record UpdateTransactionCategoryRequest(int CategoryId, bool SaveRule = false);
 
+public sealed record TransactionRuleDto(
+    int Id,
+    string ReferenceText,
+    string Direction,
+    int CategoryId,
+    string CategoryName,
+    int Priority,
+    bool IsActive);
+
 public sealed record GoalDto(
     int Id,
     string Name,
