@@ -34,3 +34,5 @@ TestResults/
 coverage/
 *.orig
 *.rej
+
+concepts/*
