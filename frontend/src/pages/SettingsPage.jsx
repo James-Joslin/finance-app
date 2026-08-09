@@ -1,21 +1,30 @@
 import { createElement, useEffect, useMemo, useState } from 'react';
-import { Archive, Building2, Moon, Pencil, Plus, ShieldCheck, Sun, Tags, Trash2, Users } from 'lucide-react';
+import { Archive, Building2, Moon, Pencil, Plus, ShieldCheck, Sun, Tags, Trash2, UserRound, Users } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Card, Field, Modal, PageState, Pill } from '../components/ui';
 import { apiError, money, percent } from '../lib/format';
-import { mutations, queryKeys, useAccounts, useFinovaMutation, useSettings, useTransactionRules } from '../lib/queries';
+import { mutations, queryKeys, useAccounts, useEnrollmentStatus, useFinovaMutation, useSettings, useTransactionRules } from '../lib/queries';
 
 export default function SettingsPage() {
+    const enrollment = useEnrollmentStatus();
     const settings = useSettings();
     const accounts = useAccounts(true);
     const rules = useTransactionRules();
     const { preference, setPreference } = useTheme();
+    const [profile, setProfile] = useState(null);
     const [household, setHousehold] = useState(null);
     const [accountEditor, setAccountEditor] = useState(false);
+    const saveProfile = useFinovaMutation(mutations.saveEnrollment, [queryKeys.enrollment, queryKeys.settings, queryKeys.dashboard]);
     const saveSettings = useFinovaMutation(mutations.saveSettings, [queryKeys.settings, queryKeys.dashboard]);
     const deleteRule = useFinovaMutation(mutations.deleteTransactionRule, [queryKeys.rules]);
 
+    useEffect(() => { if (enrollment.data?.profile) setProfile(enrollment.data.profile); }, [enrollment.data]);
     useEffect(() => { if (settings.data) setHousehold(settings.data); }, [settings.data]);
+
+    const submitProfile = async (event) => {
+        event.preventDefault();
+        await saveProfile.mutateAsync({ ...profile, householdName: household.householdName });
+    };
 
     const saveHousehold = async (event) => {
         event.preventDefault();
@@ -23,9 +32,19 @@ export default function SettingsPage() {
     };
 
     return (
-        <PageState loading={settings.isLoading || accounts.isLoading || rules.isLoading} error={(settings.error || accounts.error || rules.error) && apiError(settings.error || accounts.error || rules.error)}>
+        <PageState loading={enrollment.isLoading || settings.isLoading || accounts.isLoading || rules.isLoading} error={(enrollment.error || settings.error || accounts.error || rules.error) && apiError(enrollment.error || settings.error || accounts.error || rules.error)}>
             <div className="settings-layout">
                 <div className="settings-main page-stack">
+                    <Card>
+                        <div className="settings-card-heading"><div><span className="settings-icon"><UserRound /></span><span><h2>Profile</h2><p>Your name and workspace identity.</p></span></div></div>
+                        {profile && household && <form className="form-grid settings-form" onSubmit={submitProfile}>
+                            <Field label="First name"><input required autoComplete="given-name" maxLength="80" value={profile.firstName} onChange={(event) => setProfile({ ...profile, firstName: event.target.value })} /></Field>
+                            <Field label="Last name"><input required autoComplete="family-name" maxLength="80" value={profile.lastName} onChange={(event) => setProfile({ ...profile, lastName: event.target.value })} /></Field>
+                            {saveProfile.error && <p className="form-error span-2">{apiError(saveProfile.error)}</p>}
+                            <div className="modal-actions span-2"><button className="button" disabled={saveProfile.isPending}>{saveProfile.isPending ? 'Saving…' : 'Save profile'}</button></div>
+                        </form>}
+                    </Card>
+
                     <Card>
                         <div className="settings-card-heading"><div><span className="settings-icon"><Users /></span><span><h2>Household</h2><p>Shared display and regional preferences.</p></span></div></div>
                         {household && <form className="form-grid settings-form" onSubmit={saveHousehold}>

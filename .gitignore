@@ -4,6 +4,18 @@
 !.env.dev.example
 !.env.prod.example
 
+# Private financial data and backups
+*.dump
+*.pgdump
+*.backup
+*.pdf
+*.ofx
+*.qif
+*.csv
+backups/
+statements/
+exports/
+
 # .NET
 [Bb]in/
 [Oo]bj/

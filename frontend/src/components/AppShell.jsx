@@ -8,7 +8,7 @@ import {
 import FinovaLogo from './FinovaLogo';
 import RouteErrorBoundary from './RouteErrorBoundary';
 import { useTheme } from '../contexts/ThemeContext';
-import { searchFinova, useDashboard } from '../lib/queries';
+import { searchFinova, useDashboard, useEnrollmentStatus } from '../lib/queries';
 
 const navigation = [
     { to: '/', label: 'Overview', icon: LayoutDashboard },
@@ -32,10 +32,15 @@ export default function AppShell() {
     const navigate = useNavigate();
     const { resolved, setPreference } = useTheme();
     const dashboard = useDashboard();
+    const enrollment = useEnrollmentStatus();
     const [mobileMenu, setMobileMenu] = useState(false);
     const [alertsOpen, setAlertsOpen] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);
     const page = titles[location.pathname] || titles['/'];
+    const profile = enrollment.data?.profile;
+    const initials = [profile?.firstName, profile?.lastName]
+        .filter(Boolean).map((name) => name[0]).join('').toUpperCase() || 'F';
+    const profileName = [profile?.firstName, profile?.lastName].filter(Boolean).join(' ');
 
     const toggleTheme = () => setPreference(resolved === 'dark' ? 'light' : 'dark');
 
@@ -54,8 +59,8 @@ export default function AppShell() {
                     <a href="https://github.com/" target="_blank" rel="noreferrer"><CircleHelp /><span>Help & support</span></a>
                 </nav>
                 <div className="household-profile">
-                    <span className="avatar">MH</span>
-                    <span><strong>{dashboard.data?.householdName || 'Matthews Household'}</strong><small>Private workspace</small></span>
+                    <span className="avatar">{initials}</span>
+                    <span><strong>{dashboard.data?.householdName || 'My Household'}</strong><small>{profileName || 'Private workspace'}</small></span>
                 </div>
             </aside>
 
@@ -81,7 +86,7 @@ export default function AppShell() {
                             </button>
                             {alertsOpen && <Alerts alerts={dashboard.data?.alerts || []} close={() => setAlertsOpen(false)} />}
                         </div>
-                        <button className="avatar avatar-button" onClick={() => navigate('/settings')} aria-label="Open household settings">MH</button>
+                        <button className="avatar avatar-button" onClick={() => navigate('/settings')} aria-label="Open household settings">{initials}</button>
                     </div>
                 </header>
                 <div className="page-content"><RouteErrorBoundary><Outlet /></RouteErrorBoundary></div>
@@ -161,7 +166,7 @@ function CommandSearch({ open, onClose }) {
             <section className="command-dialog" role="dialog" aria-modal="true" aria-label="Search Finova" onMouseDown={(event) => event.stopPropagation()}>
                 <div className="command-input"><Search /><input ref={inputRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search transactions, goals, accounts and plans…" /><kbd>Esc</kbd></div>
                 <div className="command-results">
-                    {query.length < 2 && <p>Type at least two characters to search the Matthews Household.</p>}
+                    {query.length < 2 && <p>Type at least two characters to search your Finova workspace.</p>}
                     {loading && <p>Searching…</p>}
                     {!loading && query.length >= 2 && results.length === 0 && <p>No matches found.</p>}
                     {Object.entries(groups).map(([type, items]) => (

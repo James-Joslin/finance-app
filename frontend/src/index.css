@@ -462,6 +462,44 @@ kbd { font: inherit; font-size: .62rem; color: var(--text-muted); background: va
 .check-row small { color: var(--text-muted); font-size: .54rem; }
 .danger-check strong { color: var(--danger); }
 
+.enrollment-page {
+    position: relative; isolation: isolate; min-height: 100vh; overflow: hidden;
+    padding: 1.5rem clamp(1rem, 4vw, 3.5rem) 3rem;
+    background:
+        radial-gradient(circle at 10% 15%, color-mix(in srgb, var(--brand) 9%, transparent), transparent 34%),
+        radial-gradient(circle at 88% 80%, color-mix(in srgb, var(--cyan) 10%, transparent), transparent 30%),
+        var(--canvas);
+}
+.enrollment-header { width: min(1180px, 100%); height: 50px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; }
+.enrollment-theme { background: color-mix(in srgb, var(--surface) 82%, transparent); border-color: var(--border); }
+.enrollment-layout { width: min(1060px, 100%); min-height: calc(100vh - 104px); margin: 0 auto; display: grid; grid-template-columns: 1fr minmax(390px, .82fr); gap: clamp(2rem, 7vw, 6.5rem); align-items: center; }
+.enrollment-intro { position: relative; z-index: 1; }
+.enrollment-eyebrow { display: inline-flex; align-items: center; gap: .45rem; margin-bottom: 1.1rem; color: var(--brand); font-size: .7rem; font-weight: 700; }
+.enrollment-eyebrow svg { width: .9rem; height: .9rem; }
+.enrollment-intro h1 { max-width: 620px; margin-bottom: .8rem; font-size: clamp(2.5rem, 6vw, 4.9rem); line-height: .98; letter-spacing: -.065em; }
+.enrollment-intro > p { max-width: 560px; font-size: .9rem; }
+.enrollment-promises { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-top: 2rem; }
+.enrollment-promises > span { display: grid; grid-template-columns: 34px 1fr; gap: .12rem .65rem; padding: .8rem; border: 1px solid var(--border); border-radius: 12px; background: color-mix(in srgb, var(--surface) 72%, transparent); backdrop-filter: blur(12px); }
+.enrollment-promises svg { grid-row: 1 / 3; width: 1.1rem; height: 1.1rem; margin: .12rem auto 0; color: var(--mint); }
+.enrollment-promises strong { font-size: .66rem; }
+.enrollment-promises small { color: var(--text-muted); font-size: .55rem; line-height: 1.5; }
+.enrollment-card { position: relative; z-index: 2; padding: 1.4rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--surface) 94%, transparent); box-shadow: var(--shadow-md); backdrop-filter: blur(18px); }
+.enrollment-card-heading { display: flex; gap: .8rem; align-items: center; margin-bottom: 1.25rem; }
+.enrollment-card-heading > span { width: 42px; height: 42px; display: grid; place-items: center; color: var(--brand); background: var(--brand-soft); border-radius: 12px; }
+.enrollment-card-heading h2 { margin: 0; }
+.enrollment-card-heading p { margin-top: .15rem; font-size: .62rem; }
+.enrollment-form { gap: .85rem; }
+.enrollment-submit { min-height: 46px; margin-top: .15rem; font-size: .75rem; }
+.enrollment-note { display: flex; justify-content: center; align-items: center; gap: .35rem; margin-top: .9rem; font-size: .54rem; text-align: center; }
+.enrollment-note svg { width: .75rem; height: .75rem; color: var(--mint); }
+.enrollment-state { min-height: 100vh; padding: 1.5rem; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: .7rem; text-align: center; }
+.enrollment-state > svg { width: 2rem; height: 2rem; color: var(--danger); }
+.enrollment-state h1 { margin: 0; }
+.enrollment-state p { max-width: 520px; }
+.enrollment-glow { position: absolute; z-index: -1; width: 360px; height: 360px; border-radius: 50%; filter: blur(2px); opacity: .42; pointer-events: none; }
+.enrollment-glow-one { left: -210px; top: 24%; background: color-mix(in srgb, var(--brand) 22%, transparent); }
+.enrollment-glow-two { right: -220px; bottom: -90px; background: color-mix(in srgb, var(--cyan) 22%, transparent); }
+
 .modal-backdrop, .command-backdrop { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 1rem; background: rgba(3, 11, 19, .55); backdrop-filter: blur(5px); }
 .modal { width: min(540px, 100%); max-height: calc(100vh - 2rem); overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-md); padding: 1.15rem; }
 .modal-wide { width: min(880px, 100%); }
@@ -599,6 +637,18 @@ kbd { font: inherit; font-size: .62rem; color: var(--text-muted); background: va
     .modal-backdrop { padding: .5rem; }
     .popover { position: fixed; top: 60px; right: .75rem; left: .75rem; width: auto; }
     .command-backdrop { padding-top: 68px; }
+}
+
+@media (max-width: 767px) {
+    .enrollment-page { min-height: 100dvh; padding: 1rem .85rem 1.5rem; }
+    .enrollment-header { height: 42px; }
+    .enrollment-layout { min-height: auto; grid-template-columns: 1fr; gap: 1.4rem; padding-top: 2.2rem; }
+    .enrollment-intro h1 { font-size: clamp(2.45rem, 15vw, 3.8rem); }
+    .enrollment-intro > p { font-size: .78rem; }
+    .enrollment-promises { grid-template-columns: 1fr; margin-top: 1.2rem; }
+    .enrollment-card { padding: 1rem; }
+    .enrollment-form { grid-template-columns: 1fr; }
+    .enrollment-form .span-2 { grid-column: 1; }
 }
 
 @media (prefers-reduced-motion: reduce) {

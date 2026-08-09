@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../api/api';
 
 export const queryKeys = {
+    enrollment: ['enrollment'],
     settings: ['settings'],
     accounts: ['accounts'],
     categories: ['categories'],
@@ -23,6 +24,7 @@ const put = async (url, body) => (await api.put(url, body)).data;
 const patch = async (url, body) => (await api.patch(url, body)).data;
 const del = async (url) => (await api.delete(url)).data;
 
+export const useEnrollmentStatus = () => useQuery({ queryKey: queryKeys.enrollment, queryFn: () => get('/enrollment') });
 export const useSettings = () => useQuery({ queryKey: queryKeys.settings, queryFn: () => get('/settings') });
 export const useAccounts = (includeArchived = false) => useQuery({
     queryKey: [...queryKeys.accounts, includeArchived],
@@ -64,6 +66,7 @@ export const useFinovaMutation = (mutationFn, invalidate = []) => {
 };
 
 export const mutations = {
+    saveEnrollment: (body) => put('/enrollment', body),
     saveSettings: (body) => put('/settings', body),
     createAccount: (body) => post('/accounts', body),
     updateAccount: ({ id, body }) => put('/accounts/' + id, body),

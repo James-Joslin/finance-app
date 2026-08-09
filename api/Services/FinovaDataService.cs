@@ -12,6 +12,57 @@ public static class FinovaDataService
     private static readonly string[] AccountTypes = ["current", "savings", "credit", "cash", "investment"];
     private static readonly string[] Frequencies = ["weekly", "fortnightly", "monthly", "quarterly", "yearly"];
 
+    public static async Task<EnrollmentStatusDto> GetEnrollmentStatusAsync()
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT p.id, p.first_name, p.last_name, h.household_name
+            FROM user_profiles p
+            JOIN household_settings h ON h.id = 1
+            WHERE p.id = 1
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) return new(false, null);
+        return new(true, new UserProfileDto(reader.GetInt16(0), reader.GetString(1), reader.GetString(2), reader.GetString(3)));
+    }
+
+    public static async Task<EnrollmentStatusDto> SaveEnrollmentAsync(SaveEnrollmentRequest request)
+    {
+        var firstName = request.FirstName?.Trim() ?? string.Empty;
+        var lastName = request.LastName?.Trim() ?? string.Empty;
+        var householdName = request.HouseholdName?.Trim() ?? string.Empty;
+        if (firstName.Length is < 1 or > 80) throw new ArgumentException("First name must be between 1 and 80 characters.");
+        if (lastName.Length is < 1 or > 80) throw new ArgumentException("Last name must be between 1 and 80 characters.");
+        if (householdName.Length is < 1 or > 120) throw new ArgumentException("Household name must be between 1 and 120 characters.");
+
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            const string profileSql = """
+                INSERT INTO user_profiles (id, first_name, last_name)
+                VALUES (1, @first_name, @last_name)
+                ON CONFLICT (id) DO UPDATE SET first_name = excluded.first_name,
+                    last_name = excluded.last_name, updated_at = CURRENT_TIMESTAMP
+                """;
+            await using (var profile = new NpgsqlCommand(profileSql, connection, transaction))
+            {
+                profile.Parameters.AddWithValue("first_name", firstName);
+                profile.Parameters.AddWithValue("last_name", lastName);
+                await profile.ExecuteNonQueryAsync();
+            }
+
+            const string householdSql = """
+                UPDATE household_settings SET household_name = @household_name,
+                    updated_at = CURRENT_TIMESTAMP WHERE id = 1
+                """;
+            await using var household = new NpgsqlCommand(householdSql, connection, transaction);
+            household.Parameters.AddWithValue("household_name", householdName);
+            await household.ExecuteNonQueryAsync();
+        });
+        return await GetEnrollmentStatusAsync();
+    }
+
     public static async Task<HouseholdSettingsDto> GetSettingsAsync()
     {
         await using var connection = PostgreSqlQuerier.BuildConnection();
@@ -19,7 +70,7 @@ public static class FinovaDataService
         await using var command = new NpgsqlCommand(
             "SELECT household_name, currency_code, locale, timezone FROM household_settings WHERE id = 1", connection);
         await using var reader = await command.ExecuteReaderAsync();
-        if (!await reader.ReadAsync()) return new("Matthews Household", "GBP", "en-GB", "Europe/London");
+        if (!await reader.ReadAsync()) return new("My Household", "GBP", "en-GB", "Europe/London");
         return new(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3));
     }
 

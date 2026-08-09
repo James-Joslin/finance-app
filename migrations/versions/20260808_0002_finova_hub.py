@@ -31,7 +31,7 @@ def upgrade() -> None:
     )
     op.execute(
         """INSERT INTO household_settings (id, household_name, currency_code, locale, timezone)
-        VALUES (1, 'Matthews Household', 'GBP', 'en-GB', 'Europe/London')"""
+        VALUES (1, 'My Household', 'GBP', 'en-GB', 'Europe/London')"""
     )
 
     op.add_column("accounts", sa.Column("account_type", sa.String(length=24), server_default="current", nullable=False))

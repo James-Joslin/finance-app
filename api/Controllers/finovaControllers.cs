@@ -7,6 +7,19 @@ using Microsoft.AspNetCore.Mvc;
 namespace financesApi.controllers;
 
 [ApiController]
+[Route("enrollment")]
+public sealed class EnrollmentController : ControllerBase
+{
+    [HttpGet]
+    public async Task<ActionResult<EnrollmentStatusDto>> Get() =>
+        Ok(await FinovaDataService.GetEnrollmentStatusAsync());
+
+    [HttpPut]
+    public async Task<ActionResult<EnrollmentStatusDto>> Put(SaveEnrollmentRequest request) =>
+        Ok(await FinovaDataService.SaveEnrollmentAsync(request));
+}
+
+[ApiController]
 [Route("settings")]
 public sealed class SettingsController : ControllerBase
 {

@@ -1,6 +1,6 @@
 # Finova
 
-A private, responsive household finance hub for the Matthews Household. Finova combines:
+A private, responsive household finance hub. Finova combines:
 
 - Safe-to-spend balances after per-account buffers and confirmed near-term bills.
 - Multiple prioritised savings goals with account-backed waterfall allocation and countdowns.
@@ -11,6 +11,10 @@ A private, responsive household finance hub for the Matthews Household. Finova c
 
 Finova is intentionally login-free for use on a trusted private network. It does not connect to banks
 or move money; balances come from opening values and imported transactions.
+
+On first use, Finova asks for a first name, last name, and household display name. Enrollment is
+complete when the singleton profile row exists; the details can be updated later in Settings.
+Existing accounts and transactions are not changed by enrollment.
 
 Halifax PDF import supports statements containing selectable text. Image-only scans must be processed
 with OCR before import; Finova rejects them rather than silently importing incomplete financial data.

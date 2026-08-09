@@ -1,7 +1,10 @@
 import { lazy, Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
-import { LoaderCircle } from 'lucide-react';
+import { AlertCircle, LoaderCircle } from 'lucide-react';
 import AppShell from './components/AppShell';
+import EnrollmentPage from './pages/EnrollmentPage';
+import { apiError } from './lib/format';
+import { useEnrollmentStatus } from './lib/queries';
 
 const GoalsPage = lazy(() => import('./pages/GoalsPage'));
 const InsightsPage = lazy(() => import('./pages/InsightsPage'));
@@ -15,6 +18,13 @@ function PageFallback() {
 }
 
 export default function App() {
+    const enrollment = useEnrollmentStatus();
+    if (enrollment.isLoading) return <PageFallback />;
+    if (enrollment.error) {
+        return <div className="enrollment-state"><AlertCircle /><h1>Finova could not start</h1><p>{apiError(enrollment.error)}</p><button className="button" onClick={() => enrollment.refetch()}>Try again</button></div>;
+    }
+    if (!enrollment.data?.isEnrolled) return <EnrollmentPage />;
+
     return (
         <Suspense fallback={<PageFallback />}>
         <Routes>

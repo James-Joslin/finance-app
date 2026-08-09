@@ -2,6 +2,21 @@ using System.Text.Json.Serialization;
 
 namespace financesApi.models;
 
+public sealed record UserProfileDto(
+    int Id,
+    string FirstName,
+    string LastName,
+    string HouseholdName);
+
+public sealed record EnrollmentStatusDto(
+    bool IsEnrolled,
+    UserProfileDto? Profile);
+
+public sealed record SaveEnrollmentRequest(
+    string FirstName,
+    string LastName,
+    string HouseholdName);
+
 public sealed record HouseholdSettingsDto(
     string HouseholdName,
     string CurrencyCode,
