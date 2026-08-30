@@ -3,21 +3,24 @@ import { Link } from 'react-router-dom';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { GoalVisual } from '../components/GoalVisual';
 import { Card, PageState, Pill, Progress } from '../components/ui';
+import { useTheme } from '../contexts/ThemeContext';
 import { money, percent, relativeDate, shortDate } from '../lib/format';
 import { useDashboard, useInsights } from '../lib/queries';
+import { staticAssetUrl } from '../lib/staticAssets';
 import { overviewTrendRange } from '../utils/trendRange';
 
 export default function OverviewPage() {
     const dashboard = useDashboard();
+    const { resolved } = useTheme();
     const trendRange = overviewTrendRange(dashboard.data?.recentTransactions);
     const insights = useInsights(trendRange);
 
     return (
         <PageState loading={dashboard.isLoading} error={dashboard.error?.message}>
             <div className="overview-grid">
-                <SafeToSpendCard data={dashboard.data} />
+                <SafeToSpendCard data={dashboard.data} theme={resolved} />
                 <BalanceTrendCard data={insights.data} range={trendRange} />
-                <AccountsCard accounts={dashboard.data?.accounts || []} />
+                <AccountsCard accounts={dashboard.data?.accounts || []} theme={resolved} />
                 <RecentTransactionsCard items={dashboard.data?.recentTransactions || []} />
                 <PriorityGoalCard goal={dashboard.data?.priorityGoal} />
                 <SnapshotCard data={insights.data} warnings={dashboard.data?.budgetWarnings || []} />
@@ -26,7 +29,7 @@ export default function OverviewPage() {
     );
 }
 
-function SafeToSpendCard({ data }) {
+function SafeToSpendCard({ data, theme }) {
     const hasShortfall = Number(data?.shortfall) > 0;
     return (
         <Card className="safe-card">
@@ -44,7 +47,10 @@ function SafeToSpendCard({ data }) {
                 <span><small>Upcoming</small><strong>{money(data?.upcomingCommitments)}</strong></span>
             </div>
             {hasShortfall && <div className="inline-alert">Household shortfall: <strong>{money(data.shortfall)}</strong></div>}
-            <div className="safe-landscape" aria-hidden="true"><span /><span /><i /></div>
+            <div className="safe-art-stage" aria-hidden="true">
+                <img className="safe-landscape-art" src={staticAssetUrl(`landscapes/landscape_hills_tree${theme === 'dark' ? '_night' : ''}.png`)} alt="" />
+                <img className="safe-circles-art" src={staticAssetUrl(`micro_elements/decor_circles${theme === 'dark' ? '_night' : ''}.png`)} alt="" />
+            </div>
         </Card>
     );
 }
@@ -72,16 +78,17 @@ function BalanceTrendCard({ data, range }) {
                             <Area type="monotone" dataKey="value" stroke="#168bff" strokeWidth={2.4} fill="url(#balance-fill)" />
                         </AreaChart>
                     </ResponsiveContainer>
-                ) : <div className="chart-empty">Import more activity to reveal a trend.</div>}
+                ) : <div className="chart-empty"><img className="trend-empty-art" src={staticAssetUrl('decor/decor_wave_01.png')} alt="" aria-hidden="true" /><span>Import more activity to reveal a trend.</span></div>}
             </div>
         </Card>
     );
 }
 
-function AccountsCard({ accounts }) {
+function AccountsCard({ accounts, theme }) {
     return (
         <Card className="accounts-card">
             <div className="card-heading"><span className="eyebrow">Your accounts</span><Link to="/settings">Manage</Link></div>
+            <img className="accounts-landscape-art" src={staticAssetUrl(`landscapes/landscape_house_trees${theme === 'dark' ? '_night' : ''}.png`)} alt="" aria-hidden="true" />
             <div className="account-list">
                 {accounts.length === 0 && <p className="muted">Add an account to get started.</p>}
                 {accounts.slice(0, 5).map((account, index) => (

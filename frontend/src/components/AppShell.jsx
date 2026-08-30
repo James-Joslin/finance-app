@@ -9,6 +9,7 @@ import FinovaLogo from './FinovaLogo';
 import RouteErrorBoundary from './RouteErrorBoundary';
 import { useTheme } from '../contexts/ThemeContext';
 import { searchFinova, useDashboard, useEnrollmentStatus, useSettings } from '../lib/queries';
+import { staticAssetUrl } from '../lib/staticAssets';
 import { setFormatPreferences } from '../lib/format';
 
 const navigation = [
@@ -73,6 +74,7 @@ export default function AppShell() {
                 <header className="topbar">
                     <button className="icon-button menu-button" onClick={() => setMobileMenu(true)} aria-label="Open menu"><Menu /></button>
                     <div className="page-heading">
+                        <img className="page-heading-accent" src={staticAssetUrl(`decor/decor_wave_02${resolved === 'dark' ? '_night' : ''}.png`)} alt="" aria-hidden="true" />
                         <h1>{page[0]}</h1>
                         <p>{page[1]}</p>
                     </div>

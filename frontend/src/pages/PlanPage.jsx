@@ -205,7 +205,7 @@ function BudgetCard({ budget, onEdit }) {
     const over = Number(budget.remainingAmount) < 0;
     return (
         <Card className="budget-card" onClick={onEdit}>
-            <div className="card-heading"><span className={'category-chip color-' + budget.colorKey}>{budget.categoryName}</span><Pill tone={over ? 'danger' : budget.progressPercent >= 80 ? 'warning' : 'success'}>{percent(budget.progressPercent)}</Pill></div>
+            <div className="card-heading"><span className={'category-badge category-' + (budget.colorKey || 'slate')}>{budget.categoryName}</span><Pill tone={over ? 'danger' : budget.progressPercent >= 80 ? 'warning' : 'success'}>{percent(budget.progressPercent)}</Pill></div>
             <div className="budget-values"><strong>{money(budget.spentAmount)}</strong><span>of {money(budget.availableAmount)}</span></div>
             <Progress value={budget.progressPercent} tone={over ? 'danger' : 'brand'} label={budget.categoryName + ' budget'} />
             <div className="budget-footer"><span>{over ? money(Math.abs(budget.remainingAmount)) + ' over' : money(budget.remainingAmount) + ' left'}</span>{Number(budget.scheduledAmount) > 0 && <span>{money(budget.scheduledAmount)} scheduled · {money(budget.remainingAfterScheduled)} after planned</span>}{budget.rolloverEnabled && <span>{money(budget.rolloverIn)} rolled in</span>}</div>
