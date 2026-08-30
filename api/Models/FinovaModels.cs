@@ -86,6 +86,12 @@ public sealed record CategoryDto(
     string ColorKey,
     bool IsSystem);
 
+public sealed record CreateCategoryRequest(
+    string Name,
+    string Kind,
+    string IconKey,
+    string ColorKey);
+
 public sealed record TransactionTypeCodeDto(
     string Code,
     string Meaning,
