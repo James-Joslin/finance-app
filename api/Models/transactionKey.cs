@@ -7,14 +7,14 @@ namespace financesApi.models
     {
         public DateTime Date { get; set; }
         public decimal Amount { get; set; }
-        public string Payee { get; set; }
+        public string Payee { get; set; } = string.Empty;
         public string? Memo { get; set; }
         public string? FitId { get; set; }
         public string? TransType { get; set; }
 
-        public override bool Equals(object obj) => Equals(obj as TransactionKey);
+        public override bool Equals(object? obj) => Equals(obj as TransactionKey);
 
-        public bool Equals(TransactionKey other)
+        public bool Equals(TransactionKey? other)
         {
             if (other == null) return false;
             

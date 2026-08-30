@@ -4,24 +4,63 @@ import {
     Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart,
     ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
-import { Card, PageState, Pill, Progress } from '../components/ui';
-import { apiError, compactMoney, money, percent, shortDate } from '../lib/format';
+import { Card, Field, PageState, Pill, Progress } from '../components/ui';
+import { apiError, compactMoney, money, percent, shortDate, todayIso } from '../lib/format';
 import { useInsights } from '../lib/queries';
 
 const palette = ['#168bff', '#2fcdb0', '#f3b653', '#7b72ee', '#ef7898', '#57bad1', '#8ba2b8'];
 
 export default function InsightsPage() {
     const [range, setRange] = useState('month');
-    const dates = useMemo(() => rangeDates(range), [range]);
+    const [customDates, setCustomDates] = useState(() => rangeDates('month'));
+    const [appliedCustomDates, setAppliedCustomDates] = useState(() => rangeDates('month'));
+    const [customError, setCustomError] = useState('');
+    const dates = useMemo(() => range === 'custom' ? appliedCustomDates : rangeDates(range), [range, appliedCustomDates]);
     const insights = useInsights(dates);
     const data = normaliseInsights(insights.data);
+    const today = todayIso();
+
+    const applyCustomRange = (event) => {
+        event.preventDefault();
+        if (!customDates.startDate || !customDates.endDate) {
+            setCustomError('Choose both a start date and an end date.');
+            return;
+        }
+        if (customDates.startDate > customDates.endDate) {
+            setCustomError('Start date must be on or before end date.');
+            return;
+        }
+        if (customDates.endDate > today) {
+            setCustomError('End date cannot be in the future.');
+            return;
+        }
+        setCustomError('');
+        setAppliedCustomDates({ ...customDates });
+    };
+
+    const changeCustomDate = (name, value) => {
+        setCustomDates((current) => ({ ...current, [name]: value }));
+        setCustomError('');
+    };
 
     return (
         <div className="page-stack">
             <div className="page-toolbar">
-                <div className="segmented">{[['month', 'This month'], ['last', 'Last month'], ['year', 'This year']].map(([key, label]) => <button key={key} className={range === key ? 'active' : ''} onClick={() => setRange(key)}>{label}</button>)}</div>
-                <Pill>{shortDate(dates.startDate)} – {shortDate(dates.endDate)}</Pill>
+                <div className="segmented insights-range-presets">{[
+                    ['month', 'This month'], ['last', 'Last month'], ['30days', 'Last 30 days'],
+                    ['90days', 'Last 90 days'], ['year', 'Year to date'], ['previousYear', 'Previous year'],
+                    ['all', 'All time'], ['custom', 'Custom'],
+                ].map(([key, label]) => <button type="button" key={key} className={range === key ? 'active' : ''} onClick={() => { setRange(key); setCustomError(''); }}>{label}</button>)}</div>
+                <Pill>{dateRangeLabel(range, dates, data)}</Pill>
             </div>
+            {range === 'custom' && (
+                <form className="insights-date-filter" onSubmit={applyCustomRange}>
+                    <Field label="Start date"><input required type="date" max={customDates.endDate || today} value={customDates.startDate} onChange={(event) => changeCustomDate('startDate', event.target.value)} /></Field>
+                    <Field label="End date"><input required type="date" min={customDates.startDate} max={today} value={customDates.endDate} onChange={(event) => changeCustomDate('endDate', event.target.value)} /></Field>
+                    <button className="button" type="submit">Apply range</button>
+                    {customError && <p className="insights-date-error" role="alert">{customError}</p>}
+                </form>
+            )}
             <PageState loading={insights.isLoading} error={insights.error && apiError(insights.error)}>
                 <div className="insights-grid">
                     <Card className="insight-trend">
@@ -82,26 +121,43 @@ function Insight({ icon, title, copy, tone }) {
 }
 
 function rangeDates(range) {
-    const now = new Date();
+    const now = new Date(todayIso() + 'T00:00:00Z');
     let start;
     let end;
     if (range === 'last') {
-        start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        end = new Date(now.getFullYear(), now.getMonth(), 0);
-    } else if (range === 'year') {
-        start = new Date(now.getFullYear(), 0, 1);
+        start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+        end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+    } else if (range === '30days' || range === '90days') {
+        const days = range === '30days' ? 30 : 90;
+        start = new Date(now);
+        start.setUTCDate(start.getUTCDate() - (days - 1));
         end = now;
+    } else if (range === 'year') {
+        start = new Date(Date.UTC(now.getUTCFullYear(), 0, 1));
+        end = now;
+    } else if (range === 'previousYear') {
+        start = new Date(Date.UTC(now.getUTCFullYear() - 1, 0, 1));
+        end = new Date(Date.UTC(now.getUTCFullYear() - 1, 11, 31));
+    } else if (range === 'all') {
+        return { allTime: true, endDate: localIso(now) };
     } else {
-        start = new Date(now.getFullYear(), now.getMonth(), 1);
+        start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
         end = now;
     }
     return { startDate: localIso(start), endDate: localIso(end) };
 }
 
+function dateRangeLabel(range, dates, data) {
+    const start = data?.startDate || dates.startDate;
+    const end = data?.endDate || dates.endDate;
+    if (range === 'all' && !start) return 'All available history – ' + shortDate(end);
+    return shortDate(start) + ' – ' + shortDate(end);
+}
+
 function localIso(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
     return year + '-' + month + '-' + day;
 }
 

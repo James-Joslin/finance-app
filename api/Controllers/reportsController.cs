@@ -5,7 +5,6 @@ using System.Data;
 using financesApi.services;
 using financesApi.models;
 using financesApi.utilities;
-using System.Runtime;
 
 
 namespace financesApi.controllers
@@ -17,9 +16,10 @@ namespace financesApi.controllers
         [HttpPost("getAccountTable")]
         public async Task<IActionResult> getAccountTable(TransactionQueryRequest requestParameters)
         {
+            if (!requestParameters.accountId.HasValue) return BadRequest(new { error = "Account ID is required." });
             var parameters = new Dictionary<string, object>
             {
-                { "@accountId", requestParameters.accountId },
+                { "@accountId", requestParameters.accountId.Value },
             };
             // Console.WriteLine(parameters);
             DataTable accountTable = await GenericDataService.ExecuteParameterisedQueryAsync(queryPath: "get_account_table", parameters);

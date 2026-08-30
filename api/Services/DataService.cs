@@ -82,6 +82,11 @@ namespace financesApi.services
             var unkeyedOccurrences = new Dictionary<string, int>();
             await using var connection = PostgreSqlQuerier.BuildConnection();
             await connection.OpenAsync();
+            await using (var account = new NpgsqlCommand("SELECT 1 FROM accounts WHERE id=@id AND NOT is_archived", connection))
+            {
+                account.Parameters.AddWithValue("id", accountId);
+                if (await account.ExecuteScalarAsync() is null) throw new ArgumentException("An active import account is required.");
+            }
             await using var databaseTransaction = await connection.BeginTransactionAsync();
 
             foreach (var item in incomingTransactions)

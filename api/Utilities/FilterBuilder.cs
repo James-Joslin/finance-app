@@ -12,12 +12,9 @@ namespace financesApi.utilities
         public static string BuildFilter(TransactionQueryRequest queryParameters)
         {
             StringBuilder filter = new StringBuilder();
-            bool hasCondition = false;
-
             if (queryParameters.accountName != null)
             {
                 filter.Append("WHERE client_theseus_id = ").Append(queryParameters.accountName).Append(' ');
-                hasCondition = true;
             }
 
             return filter.ToString();

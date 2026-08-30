@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.RegularExpressions;
+using System.Globalization;
 using financesApi.models;
 
 namespace financesApi.utilities
@@ -26,12 +27,14 @@ namespace financesApi.utilities
             string ofxBody = content.Substring(bodyStart);
             var transactionMatches = Regex.Matches(ofxBody, @"<STMTTRN>(.*?)</STMTTRN>", RegexOptions.Singleline);
 
+            var transactionNumber = 0;
             foreach (Match match in transactionMatches)
             {
+                transactionNumber++;
                 string block = match.Groups[1].Value;
 
-                DateTime date = ExtractDate(block, "DTPOSTED");
-                decimal amount = ExtractDecimal(block, "TRNAMT");
+                DateTime date = ExtractDate(block, "DTPOSTED", transactionNumber);
+                decimal amount = ExtractDecimal(block, "TRNAMT", transactionNumber);
                 string payee = ExtractTag(block, "NAME");
                 string memo = ExtractTag(block, "MEMO");
                 string fitId = ExtractTag(block, "FITID");
@@ -76,34 +79,35 @@ namespace financesApi.utilities
         private static string ExtractTag(string block, string tag)
         {
             var match = Regex.Match(block, $"<{tag}>(.*?)\\s*(?=<|$)", RegexOptions.IgnoreCase);
-            return match.Success ? match.Groups[1].Value.Trim() : null;
+            return match.Success ? match.Groups[1].Value.Trim() : string.Empty;
         }
 
-        private static DateTime ExtractDate(string block, string tag)
+        private static DateTime ExtractDate(string block, string tag, int transactionNumber)
         {
             string raw = ExtractTag(block, tag);
 
             if (string.IsNullOrWhiteSpace(raw))
-                return DateTime.MinValue;
+                throw new InvalidDataException($"OFX transaction {transactionNumber} has no posting date.");
 
             // OFX datetime format: YYYYMMDDHHMMSS[.XXX][GMT offset]
             // We'll just take the first 14 digits if available
-            string cleaned = raw.Length >= 14 ? raw.Substring(0, 14) : raw.Substring(0, 8);
+            if (raw.Length < 8) throw new InvalidDataException($"OFX transaction {transactionNumber} has an invalid posting date.");
+            string cleaned = raw.Length >= 14 ? raw[..14] : raw[..8];
 
             string[] formats = { "yyyyMMddHHmmss", "yyyyMMdd" };
 
             if (DateTime.TryParseExact(cleaned, formats, null, System.Globalization.DateTimeStyles.None, out var date))
                 return date;
 
-            return DateTime.MinValue;
+            throw new InvalidDataException($"OFX transaction {transactionNumber} has an invalid posting date.");
         }
 
-        private static decimal ExtractDecimal(string block, string tag)
+        private static decimal ExtractDecimal(string block, string tag, int transactionNumber)
         {
             string raw = ExtractTag(block, tag);
-            if (decimal.TryParse(raw, out var value))
+            if (decimal.TryParse(raw, NumberStyles.Number | NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var value))
                 return value;
-            return 0;
+            throw new InvalidDataException($"OFX transaction {transactionNumber} has an invalid amount.");
         }
     }
 }

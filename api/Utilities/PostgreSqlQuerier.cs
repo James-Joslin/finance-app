@@ -56,7 +56,7 @@ namespace financesApi.utilities
             }
         }
         
-        public static async Task<DataTable> ExecuteParameterisedQueryAsync(string query, Dictionary<string, object> parameters = null)
+        public static async Task<DataTable> ExecuteParameterisedQueryAsync(string query, Dictionary<string, object>? parameters = null)
         {
             try
             {
@@ -65,7 +65,7 @@ namespace financesApi.utilities
 
                 using var command = new NpgsqlCommand(query, connection);
 
-                foreach (var param in parameters)
+                foreach (var param in parameters ?? [])
                 {
                     command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
                 }

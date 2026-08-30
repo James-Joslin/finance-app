@@ -70,7 +70,7 @@ public sealed class CategoriesController : ControllerBase
         await FinovaDataService.DeleteTransactionRuleAsync(id) ? NoContent() : NotFound();
 
     [HttpPost]
-    public async Task<ActionResult<CategoryDto>> Post(CategoryDto request)
+    public async Task<ActionResult<CategoryDto>> Post(CreateCategoryRequest request)
     {
         var category = await FinovaDataService.CreateCategoryAsync(request);
         return Created($"/categories/{category.Id}", category);
@@ -149,16 +149,24 @@ public sealed class TransactionsController : ControllerBase
         [FromQuery] int? accountId, [FromQuery] int? categoryId, [FromQuery] string? search,
         [FromQuery] string type = "all", [FromQuery] DateOnly? startDate = null, [FromQuery] DateOnly? endDate = null)
     {
-        var page = await FinovaDataService.GetTransactionsAsync(accountId, categoryId, search, type, startDate, endDate, 1, 10000);
         var csv = new StringBuilder("Date,Description,Memo,Category,Account,Status,Amount\r\n");
-        foreach (var item in page.Items)
+        const int pageSize = 1000;
+        var pageNumber = 1;
+        TransactionPageDto page;
+        do
         {
-            csv.Append(Csv(item.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))).Append(',')
-                .Append(Csv(item.Payee)).Append(',').Append(Csv(item.Memo)).Append(',')
-                .Append(Csv(item.CategoryName)).Append(',').Append(Csv(item.AccountName)).Append(',')
-                .Append(Csv(item.Status)).Append(',').Append(item.Amount.ToString(CultureInfo.InvariantCulture)).Append("\r\n");
-        }
-        return File(Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"finova-transactions-{DateTime.UtcNow:yyyyMMdd}.csv");
+            page = await FinovaDataService.GetTransactionsAsync(accountId, categoryId, search, type, startDate, endDate, pageNumber, pageSize);
+            foreach (var item in page.Items)
+            {
+                csv.Append(Csv(item.Date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture))).Append(',')
+                    .Append(Csv(item.Payee)).Append(',').Append(Csv(item.Memo)).Append(',')
+                    .Append(Csv(item.CategoryName)).Append(',').Append(Csv(item.AccountName)).Append(',')
+                    .Append(Csv(item.Status)).Append(',').Append(item.Amount.ToString(CultureInfo.InvariantCulture)).Append("\r\n");
+            }
+            pageNumber++;
+        } while (pageNumber <= page.TotalPages);
+        var today = await FinovaDataService.GetHouseholdTodayAsync();
+        return File(Encoding.UTF8.GetBytes(csv.ToString()), "text/csv", $"finova-transactions-{today:yyyyMMdd}.csv");
     }
 
     private static string Csv(string? value) => $"\"{(value ?? string.Empty).Replace("\"", "\"\"")}\"";
@@ -290,11 +298,18 @@ public sealed class DashboardController : ControllerBase
 public sealed class InsightsController : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<InsightsDto>> Get([FromQuery] DateOnly? startDate, [FromQuery] DateOnly? endDate)
+    public async Task<ActionResult<InsightsDto>> Get(
+        [FromQuery] DateOnly? startDate,
+        [FromQuery] DateOnly? endDate,
+        [FromQuery] bool allTime = false)
     {
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
-        return Ok(await FinovaDataService.GetInsightsAsync(
-            startDate ?? new DateOnly(today.Year, today.Month, 1), endDate ?? today));
+        var today = await FinovaDataService.GetHouseholdTodayAsync();
+        var effectiveEnd = endDate ?? today;
+        if (effectiveEnd > today) throw new ArgumentException("End date cannot be in the future.");
+        var effectiveStart = allTime
+            ? await FinovaDataService.GetEarliestInsightsDateAsync(effectiveEnd)
+            : startDate ?? new DateOnly(effectiveEnd.Year, effectiveEnd.Month, 1);
+        return Ok(await FinovaDataService.GetInsightsAsync(effectiveStart, effectiveEnd));
     }
 }
 
