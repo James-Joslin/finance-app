@@ -43,6 +43,18 @@ public sealed class FinanceMathTests
     }
 
     [Fact]
+    public void BudgetRolloverCanBeCalculatedAcrossSkippedMonths()
+    {
+        var january = FinanceMath.CalculateBudget(500m, true, 0m, 300m);
+        var february = FinanceMath.CalculateBudget(500m, true, january.Remaining, 450m);
+        var march = FinanceMath.CalculateBudget(500m, true, february.Remaining, 100m);
+
+        Assert.Equal(200m, february.RolloverIn);
+        Assert.Equal(250m, march.RolloverIn);
+        Assert.Equal(650m, march.Remaining);
+    }
+
+    [Fact]
     public void GoalPaceHandlesMissingAndPastDates()
     {
         var today = new DateOnly(2026, 8, 8);
