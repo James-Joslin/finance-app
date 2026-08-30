@@ -2,17 +2,27 @@ import { useEffect, useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, CalendarDays, CheckCircle2, ImagePlus, Pencil, Plus, Sparkles, Target } from 'lucide-react';
 import { GoalIconPicker, GoalVisual, goalColors } from '../components/GoalVisual';
 import { Card, Field, Modal, PageState, Pill, Progress } from '../components/ui';
+import { useTheme } from '../contexts/ThemeContext';
 import { apiError, money, percent, shortDate } from '../lib/format';
 import { mutations, queryKeys, useAccounts, useFinovaMutation, useGoals } from '../lib/queries';
+import { staticAssetUrl } from '../lib/staticAssets';
 
 export default function GoalsPage() {
     const goals = useGoals();
     const accounts = useAccounts();
     const [editor, setEditor] = useState(false);
+    const { resolved } = useTheme();
     const active = goals.data?.items || [];
     const featured = active.find((goal) => goal.status === 'active' && !goal.isFunded) || active[0];
     const others = active.filter((goal) => goal.id !== featured?.id);
 
+    const night = resolved === 'dark' ? '_night' : '';
+    const artwork = {
+        cloud: staticAssetUrl(`decor/decor_cloud${night}.png`),
+        circles: staticAssetUrl(`decor/decor_circles${night}.png`),
+        tree: staticAssetUrl(`decor/decor_tree${night}.png`),
+        wave: staticAssetUrl(`decor/decor_wave_02${night}.png`),
+    };
     const reorder = useFinovaMutation(mutations.reorderGoals, [queryKeys.goals, queryKeys.dashboard]);
     const move = (goalId, direction) => {
         const ids = active.map((goal) => goal.id);
@@ -29,11 +39,13 @@ export default function GoalsPage() {
                 <div className="goals-summary-bar">
                     <div><span className="eyebrow">Household progress</span><strong>{money(goals.data?.allocatedTotal)} <small>of {money(goals.data?.targetTotal)}</small></strong></div>
                     <div><span>{percent(goals.data?.progressPercent)}</span><Progress value={goals.data?.progressPercent} /></div>
+                    <img className="goals-summary-art" src={artwork.wave} alt="" aria-hidden="true" />
                     <button className="button" onClick={() => setEditor({})}><Plus /> Add goal</button>
                 </div>
 
-                {featured ? <FeaturedGoal goal={featured} onEdit={() => setEditor(featured)} /> : (
+                {featured ? <FeaturedGoal goal={featured} artwork={artwork.cloud} onEdit={() => setEditor(featured)} /> : (
                     <Card className="goal-onboarding">
+                        <img className="goal-onboarding-art" src={artwork.tree} alt="" aria-hidden="true" />
                         <GoalVisual iconKey="general_target" colorKey="blue" />
                         <div><span className="eyebrow"><Sparkles /> Start with what matters most</span><h2>Give your savings a destination</h2><p>Choose an account, amount, and date. Finova will calculate progress without moving your money.</p><button className="button" onClick={() => setEditor({})}><Plus /> Create your first goal</button></div>
                     </Card>
@@ -41,7 +53,7 @@ export default function GoalsPage() {
 
                 {others.length > 0 && <>
                     <section className="section-heading"><div><span className="eyebrow">Your roadmap</span><h2>Other goals</h2><p>Priority determines how each account balance flows through its goals.</p></div></section>
-                    <div className="goals-grid">
+                    <div className="goals-grid" style={{ '--goal-card-art': `url("${artwork.circles}")` }}>
                         {others.map((goal) => {
                             const position = active.findIndex((item) => item.id === goal.id);
                             return <GoalCard key={goal.id} goal={goal} onEdit={() => setEditor(goal)} onUp={() => move(goal.id, -1)} onDown={() => move(goal.id, 1)} first={position === 0} last={position === active.length - 1} />;
@@ -55,9 +67,10 @@ export default function GoalsPage() {
     );
 }
 
-function FeaturedGoal({ goal, onEdit }) {
+function FeaturedGoal({ goal, artwork, onEdit }) {
     return (
         <Card className="featured-goal">
+            <img className="featured-goal-art" src={artwork} alt="" aria-hidden="true" />
             <div className="featured-goal-copy">
                 <div className="card-heading"><div><Pill tone="info">Priority 1</Pill><h2>{goal.name}</h2><p>{goal.description || 'Your highest-priority savings target.'}</p></div><button className="icon-button" onClick={onEdit} aria-label={'Edit ' + goal.name}><Pencil /></button></div>
                 <div className="featured-progress">

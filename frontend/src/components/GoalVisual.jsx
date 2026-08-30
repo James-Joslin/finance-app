@@ -61,10 +61,10 @@ export function GoalVisual({ iconKey = 'general_target', colorKey = 'blue', imag
             role="img"
             aria-label={label || definition.title}
         >
-            <svg className="goal-landscape" viewBox="0 0 180 80" aria-hidden="true">
-                <path d="M0 65 C35 35 58 75 91 47 C121 21 143 56 180 25 V80 H0Z" fill="var(--goal-secondary)" opacity=".18" />
-                <path d="M0 73 C46 49 78 79 112 58 C139 41 158 59 180 48 V80 H0Z" fill="var(--goal-primary)" opacity=".18" />
-                <circle cx="151" cy="18" r="9" fill="var(--goal-secondary)" opacity=".38" />
+            <svg className="goal-vector-art" viewBox="0 0 400 120" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+                <path d="M-18 104 C58 49 121 132 205 77 C278 29 331 111 418 54 V138 H-18Z" fill="var(--goal-secondary)" opacity=".14" />
+                <path d="M-18 100 C58 45 121 128 205 73 C278 25 331 107 418 50" fill="none" stroke="var(--goal-primary)" strokeWidth="2" strokeOpacity=".42" vectorEffect="non-scaling-stroke" />
+                <circle cx="334" cy="25" r="24" fill="var(--goal-secondary)" opacity=".24" />
             </svg>
             <span className="goal-icon-orbit"><Icon strokeWidth={1.8} /></span>
         </div>
