@@ -88,6 +88,13 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
     const updateCategory = useFinovaMutation(mutations.updateTransactionCategory, [
         ['transactions'], queryKeys.dashboard, ['insights'], queryKeys.budgets, queryKeys.rules,
     ]);
+    const changeCategory = (item, categoryId) => {
+        const saveRule = window.confirm(
+            `Apply this category automatically to future imports matching ${item.payee || item.memo || 'this reference'}?\n\n` +
+            'Choose OK to create a rule, or Cancel to change only this transaction.'
+        );
+        updateCategory.mutate({ id: item.id, categoryId, saveRule });
+    };
     return (
         <>
             <div className="desktop-table-wrap">
@@ -97,7 +104,7 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
                         <tr key={item.id}>
                             <td>{shortDate(item.date)}</td>
                             <td><div className="description-cell"><span className={'transaction-mark small ' + (isIncomeTransaction(item) ? 'income' : '')}><WalletCards /></span><span><strong>{item.payee || item.memo || 'Transaction'}</strong><small>{transactionDetail(item)}</small></span></div></td>
-                            <td><select className="table-select" title="Changing this category also updates the automatic rule for this reference." aria-label={'Category for ' + (item.payee || item.memo || 'transaction')} value={item.categoryId || ''} onChange={(event) => updateCategory.mutate({ id: item.id, categoryId: Number(event.target.value), saveRule: true })}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></td>
+                            <td><select className="table-select" title="Choose whether this applies once or to future matching imports." aria-label={'Category for ' + (item.payee || item.memo || 'transaction')} value={item.categoryId || ''} onChange={(event) => changeCategory(item, Number(event.target.value))}>{categories.map((category) => <option key={category.id} value={category.id}>{category.name}</option>)}</select></td>
                             <td>{item.accountName}</td>
                             <td><Pill tone={item.status === 'completed' ? 'success' : 'info'}>{item.status}</Pill></td>
                             <td className={'align-right amount ' + (isIncomeTransaction(item) ? 'positive' : '')}>{isIncomeTransaction(item) ? '+' : ''}{money(item.amount)}</td>

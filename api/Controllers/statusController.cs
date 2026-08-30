@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
 using System.Reflection;
+using financesApi.utilities;
 
 namespace financesApi.controllers
 {
@@ -8,29 +9,41 @@ namespace financesApi.controllers
     [Route("[controller]")]
     public class statusController : ControllerBase
     {
+        private readonly IWebHostEnvironment environment;
+
+        public statusController(IWebHostEnvironment environment)
+        {
+            this.environment = environment;
+        }
+
         [HttpGet("health")]
         public async Task<IActionResult> health()
         {
-            var healthStatus = new
+            try
             {
-                status = "healthy",
-                timestamp = DateTime.UtcNow,
-                uptime = GetUptime(),
-                version = GetVersion()
-            };
-
-            return Ok(healthStatus);
+                await using var connection = PostgreSqlQuerier.BuildConnection();
+                await connection.OpenAsync();
+                await using var command = new Npgsql.NpgsqlCommand("SELECT 1", connection);
+                await command.ExecuteScalarAsync();
+                return Ok(new { status = "healthy", timestamp = DateTime.UtcNow, uptime = GetUptime(), version = GetVersion(), database = "healthy" });
+            }
+            catch
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    new { status = "unhealthy", timestamp = DateTime.UtcNow, database = "unavailable" });
+            }
         }
 
         [HttpGet("ping")]
-        public async Task<IActionResult> ping()
+        public IActionResult ping()
         {
             return Ok(new { message = "pong", timestamp = DateTime.UtcNow });
         }
 
         [HttpGet("detailed")]
-        public async Task<IActionResult> detailed()
+        public IActionResult detailed()
         {
+            if (!environment.IsDevelopment()) return NotFound();
             var detailedStatus = new
             {
                 status = "healthy",

@@ -8,7 +8,8 @@ import {
 import FinovaLogo from './FinovaLogo';
 import RouteErrorBoundary from './RouteErrorBoundary';
 import { useTheme } from '../contexts/ThemeContext';
-import { searchFinova, useDashboard, useEnrollmentStatus } from '../lib/queries';
+import { searchFinova, useDashboard, useEnrollmentStatus, useSettings } from '../lib/queries';
+import { setFormatPreferences } from '../lib/format';
 
 const navigation = [
     { to: '/', label: 'Overview', icon: LayoutDashboard },
@@ -33,6 +34,8 @@ export default function AppShell() {
     const { resolved, setPreference } = useTheme();
     const dashboard = useDashboard();
     const enrollment = useEnrollmentStatus();
+    const settings = useSettings();
+    setFormatPreferences(settings.data);
     const [mobileMenu, setMobileMenu] = useState(false);
     const [alertsOpen, setAlertsOpen] = useState(false);
     const [searchOpen, setSearchOpen] = useState(false);

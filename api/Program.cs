@@ -32,13 +32,14 @@ app.UseExceptionHandler(exceptionHandlerApp =>
         context.Response.StatusCode = exception switch
         {
             ArgumentException => StatusCodes.Status400BadRequest,
+            KeyNotFoundException => StatusCodes.Status404NotFound,
             ResourceNotFoundException => StatusCodes.Status404NotFound,
             ResourceConflictException => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status500InternalServerError,
         };
         await context.Response.WriteAsJsonAsync(new
         {
-            error = exception is ArgumentException or ResourceNotFoundException or ResourceConflictException
+            error = exception is ArgumentException or KeyNotFoundException or ResourceNotFoundException or ResourceConflictException
                 ? exception.Message
                 : "Finova could not complete that request."
         });

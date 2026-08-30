@@ -2,7 +2,7 @@ import { createElement, useEffect, useMemo, useState } from 'react';
 import { Archive, Building2, Moon, Pencil, Plus, ShieldCheck, Sun, Tags, Trash2, UserRound, Users } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
 import { Card, Field, Modal, PageState, Pill } from '../components/ui';
-import { apiError, money, percent } from '../lib/format';
+import { apiError, money, percent, todayIso } from '../lib/format';
 import { mutations, queryKeys, useAccounts, useEnrollmentStatus, useFinovaMutation, useSettings, useTransactionRules } from '../lib/queries';
 
 export default function SettingsPage() {
@@ -126,7 +126,7 @@ function AccountPosition({ account }) {
 function AccountEditor({ open, account, onClose }) {
     const blank = useMemo(() => ({
         name: '', primaryHolderName: '', secondaryHolderName: '', isShared: false, accountType: 'current',
-        institution: '', lastFour: '', openingBalance: 0, openingDate: new Date().toISOString().slice(0, 10),
+        institution: '', lastFour: '', openingBalance: 0, openingDate: todayIso(),
         creditLimit: '', safeZoneAmount: 0, includeInSafeToSpend: true, isArchived: false,
     }), []);
     const [form, setForm] = useState(blank);

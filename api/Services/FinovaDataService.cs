@@ -12,6 +12,16 @@ public static class FinovaDataService
     private static readonly string[] AccountTypes = ["current", "savings", "credit", "cash", "investment"];
     private static readonly string[] Frequencies = ["weekly", "fortnightly", "monthly", "quarterly", "yearly"];
 
+    public static async Task<DateOnly> GetHouseholdTodayAsync()
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        await using var command = new NpgsqlCommand(
+            "SELECT (CURRENT_TIMESTAMP AT TIME ZONE timezone)::date FROM household_settings WHERE id=1", connection);
+        var value = await command.ExecuteScalarAsync();
+        return value is DateTime date ? DateOnly.FromDateTime(date) : DateOnly.FromDateTime(DateTime.UtcNow);
+    }
+
     public static async Task<EnrollmentStatusDto> GetEnrollmentStatusAsync()
     {
         await using var connection = PostgreSqlQuerier.BuildConnection();
@@ -76,6 +86,18 @@ public static class FinovaDataService
 
     public static async Task<HouseholdSettingsDto> UpdateSettingsAsync(UpdateHouseholdSettingsRequest request)
     {
+        var householdName = request.HouseholdName?.Trim() ?? string.Empty;
+        var currency = request.CurrencyCode?.Trim().ToUpperInvariant() ?? string.Empty;
+        var locale = request.Locale?.Trim() ?? string.Empty;
+        var timezone = request.Timezone?.Trim() ?? string.Empty;
+        if (householdName.Length is < 1 or > 120) throw new ArgumentException("Household name must be between 1 and 120 characters.");
+        if (currency.Length != 3 || !currency.All(char.IsLetter)) throw new ArgumentException("Currency must be a three-letter ISO code.");
+        try { _ = CultureInfo.GetCultureInfo(locale); }
+        catch (CultureNotFoundException) { throw new ArgumentException("Locale is not recognised."); }
+        try { _ = TimeZoneInfo.FindSystemTimeZoneById(timezone); }
+        catch (TimeZoneNotFoundException) { throw new ArgumentException("Timezone is not recognised."); }
+        catch (InvalidTimeZoneException) { throw new ArgumentException("Timezone is not valid."); }
+
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         const string sql = """
@@ -84,10 +106,10 @@ public static class FinovaDataService
             WHERE id = 1
             """;
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("name", request.HouseholdName.Trim());
-        command.Parameters.AddWithValue("currency", request.CurrencyCode.Trim().ToUpperInvariant());
-        command.Parameters.AddWithValue("locale", request.Locale.Trim());
-        command.Parameters.AddWithValue("timezone", request.Timezone.Trim());
+        command.Parameters.AddWithValue("name", householdName);
+        command.Parameters.AddWithValue("currency", currency);
+        command.Parameters.AddWithValue("locale", locale);
+        command.Parameters.AddWithValue("timezone", timezone);
         await command.ExecuteNonQueryAsync();
         return await GetSettingsAsync();
     }
@@ -122,21 +144,36 @@ public static class FinovaDataService
             Clean(string.Join(' ', new[] { request.FirstName, request.LastName }.Where(value => !string.IsNullOrWhiteSpace(value))));
         var secondaryHolder = Clean(request.SecondaryHolderName);
         ValidateAccount(request.AccountType, request.SafeZoneAmount, request.Name, request.IsShared, primaryHolder, secondaryHolder, request.CreditLimit);
+        ValidateLastFour(request.LastFour);
         var accountId = 0;
         await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
         {
-            const string personSql = """
-                INSERT INTO people (first_name, last_name)
-                VALUES (@first, @last)
-                ON CONFLICT DO NOTHING;
-                SELECT id FROM people WHERE lower(first_name) = lower(@first) AND lower(last_name) = lower(@last)
-                ORDER BY id LIMIT 1;
-                """;
-            await using var personCommand = new NpgsqlCommand(personSql, connection, transaction);
             var holderParts = primaryHolder!.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
-            personCommand.Parameters.AddWithValue("first", holderParts[0]);
-            personCommand.Parameters.AddWithValue("last", holderParts.Length > 1 ? holderParts[1] : "");
-            var personId = Convert.ToInt32(await personCommand.ExecuteScalarAsync());
+            var first = holderParts[0];
+            var last = holderParts.Length > 1 ? holderParts[1] : "";
+            await using (var personLock = new NpgsqlCommand("LOCK TABLE people IN SHARE ROW EXCLUSIVE MODE", connection, transaction))
+                await personLock.ExecuteNonQueryAsync();
+            int personId;
+            await using (var existingPerson = new NpgsqlCommand(
+                "SELECT id FROM people WHERE lower(first_name)=lower(@first) AND lower(last_name)=lower(@last) ORDER BY id LIMIT 1",
+                connection, transaction))
+            {
+                existingPerson.Parameters.AddWithValue("first", first);
+                existingPerson.Parameters.AddWithValue("last", last);
+                var existingId = await existingPerson.ExecuteScalarAsync();
+                if (existingId is not null)
+                {
+                    personId = Convert.ToInt32(existingId);
+                }
+                else
+                {
+                    await using var insertPerson = new NpgsqlCommand(
+                        "INSERT INTO people (first_name, last_name) VALUES (@first, @last) RETURNING id", connection, transaction);
+                    insertPerson.Parameters.AddWithValue("first", first);
+                    insertPerson.Parameters.AddWithValue("last", last);
+                    personId = Convert.ToInt32(await insertPerson.ExecuteScalarAsync());
+                }
+            }
 
             const string accountSql = """
                 INSERT INTO accounts (name, owner_id, is_shared, account_type, institution, last_four,
@@ -179,6 +216,7 @@ public static class FinovaDataService
         var primaryHolder = Clean(request.PrimaryHolderName);
         var secondaryHolder = Clean(request.SecondaryHolderName);
         ValidateAccount(request.AccountType, request.SafeZoneAmount, request.Name, request.IsShared, primaryHolder, secondaryHolder, request.CreditLimit);
+        ValidateLastFour(request.LastFour);
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         await using (var typeCommand = new NpgsqlCommand("SELECT account_type FROM accounts WHERE id = @id", connection))
@@ -225,22 +263,41 @@ public static class FinovaDataService
         return rows;
     }
 
-    public static async Task<CategoryDto> CreateCategoryAsync(CategoryDto request)
+    public static async Task<CategoryDto> CreateCategoryAsync(CreateCategoryRequest request)
     {
+        var name = request.Name?.Trim() ?? string.Empty;
+        var kind = request.Kind?.Trim().ToLowerInvariant() ?? string.Empty;
+        var icon = request.IconKey?.Trim() ?? string.Empty;
+        var color = request.ColorKey?.Trim() ?? string.Empty;
+        if (name.Length is < 1 or > 120) throw new ArgumentException("Category name must be between 1 and 120 characters.");
+        if (kind is not ("income" or "expense" or "transfer")) throw new ArgumentException("Category kind must be income, expense, or transfer.");
+        if (icon.Length is < 1 or > 40 || color.Length is < 1 or > 24) throw new ArgumentException("Category icon or colour is invalid.");
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
+        await using (var duplicate = new NpgsqlCommand("SELECT 1 FROM categories WHERE lower(name)=lower(@name)", connection))
+        {
+            duplicate.Parameters.AddWithValue("name", name);
+            if (await duplicate.ExecuteScalarAsync() is not null) throw new ResourceConflictException("A category with that name already exists.");
+        }
         const string sql = """
             INSERT INTO categories (name, kind, icon_key, color_key) VALUES (@name, @kind, @icon, @color)
             RETURNING id, name, kind, icon_key, color_key, is_system
             """;
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("name", request.Name.Trim());
-        command.Parameters.AddWithValue("kind", request.Kind);
-        command.Parameters.AddWithValue("icon", request.IconKey);
-        command.Parameters.AddWithValue("color", request.ColorKey);
-        await using var reader = await command.ExecuteReaderAsync();
-        await reader.ReadAsync();
-        return new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5));
+        command.Parameters.AddWithValue("name", name);
+        command.Parameters.AddWithValue("kind", kind);
+        command.Parameters.AddWithValue("icon", icon);
+        command.Parameters.AddWithValue("color", color);
+        try
+        {
+            await using var reader = await command.ExecuteReaderAsync();
+            await reader.ReadAsync();
+            return new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5));
+        }
+        catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            throw new ResourceConflictException("A category with that name already exists.");
+        }
     }
 
     public static async Task<IReadOnlyList<TransactionRuleDto>> GetTransactionRulesAsync()
@@ -278,6 +335,9 @@ public static class FinovaDataService
     public static async Task<TransactionPageDto> GetTransactionsAsync(
         int? accountId, int? categoryId, string? search, string type, DateOnly? startDate, DateOnly? endDate, int page, int pageSize)
     {
+        if (type is not ("all" or "income" or "spending" or "transfer")) throw new ArgumentException("Unsupported transaction type filter.");
+        if (startDate.HasValue && endDate.HasValue && endDate < startDate) throw new ArgumentException("End date must be on or after start date.");
+        if (search?.Length > 200) throw new ArgumentException("Search text must be no longer than 200 characters.");
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 10000);
         var filters = new List<string> { "NOT a.is_archived" };
@@ -334,6 +394,11 @@ public static class FinovaDataService
     {
         await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
         {
+            await using (var category = new NpgsqlCommand("SELECT 1 FROM categories WHERE id=@id AND NOT is_archived", connection, transaction))
+            {
+                category.Parameters.AddWithValue("id", request.CategoryId);
+                if (await category.ExecuteScalarAsync() is null) throw new ArgumentException("Category was not found.");
+            }
             const string updateSql = """
                 UPDATE transactions SET category_id = @category,
                     is_transfer = EXISTS (SELECT 1 FROM categories WHERE id = @category AND kind = 'transfer')
@@ -342,7 +407,7 @@ public static class FinovaDataService
             await using var update = new NpgsqlCommand(updateSql, connection, transaction);
             update.Parameters.AddWithValue("category", request.CategoryId);
             update.Parameters.AddWithValue("id", id);
-            if (await update.ExecuteNonQueryAsync() == 0) throw new KeyNotFoundException();
+            if (await update.ExecuteNonQueryAsync() == 0) throw new ResourceNotFoundException("Transaction was not found.");
             if (request.SaveRule)
             {
                 const string ruleSql = """
@@ -410,6 +475,14 @@ public static class FinovaDataService
             if (request.Kind == "income" && accountType == "credit")
                 throw new ArgumentException("Credit-card repayments are not income. Record the payday against the account that receives it.");
         }
+        if (request.CategoryId.HasValue)
+        {
+            await using var categoryCommand = new NpgsqlCommand("SELECT kind FROM categories WHERE id=@id AND NOT is_archived", connection);
+            categoryCommand.Parameters.AddWithValue("id", request.CategoryId.Value);
+            var categoryKind = await categoryCommand.ExecuteScalarAsync() as string;
+            if (categoryKind is null || categoryKind == "transfer" || (request.Kind == "income" && categoryKind != "income") || (request.Kind == "bill" && categoryKind != "expense"))
+                throw new ArgumentException("The selected category does not match the recurring item type.");
+        }
         var identity = Clean(request.MatchText) ?? request.Name.Trim();
         const string duplicateSql = """
             SELECT r.id FROM recurring_items r
@@ -461,6 +534,7 @@ public static class FinovaDataService
         command.Parameters.AddWithValue("source_transaction", (object?)request.SourceTransactionId ?? DBNull.Value);
         if (id.HasValue) command.Parameters.AddWithValue("id", id.Value);
         var savedId = Convert.ToInt32(await command.ExecuteScalarAsync());
+        if (savedId == 0) throw new ResourceNotFoundException("Recurring plan was not found.");
         await RefreshRecurringOccurrencesAsync(savedId);
         return (await GetRecurringItemsAsync(false)).Single(r => r.Id == savedId);
     }
@@ -479,7 +553,7 @@ public static class FinovaDataService
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("id", transactionId);
         await using var reader = await command.ExecuteReaderAsync();
-        if (!await reader.ReadAsync()) throw new KeyNotFoundException("Transaction was not found.");
+        if (!await reader.ReadAsync()) throw new ResourceNotFoundException("Transaction was not found.");
         var accountId = reader.GetInt32(0);
         var importedAmount = reader.GetDecimal(1);
         var reference = reader.GetString(2);
@@ -515,8 +589,9 @@ public static class FinovaDataService
         DateOnly? start = null, DateOnly? end = null, int? recurringItemId = null)
     {
         await EnsureRecurringOccurrencesAsync();
-        start ??= DateOnly.FromDateTime(DateTime.UtcNow).AddDays(-31);
-        end ??= DateOnly.FromDateTime(DateTime.UtcNow).AddMonths(6);
+        var today = await GetHouseholdTodayAsync();
+        start ??= today.AddDays(-31);
+        end ??= today.AddMonths(6);
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         const string sql = """
@@ -549,8 +624,10 @@ public static class FinovaDataService
             throw new ArgumentException("An occurrence can be expected, paid, or skipped.");
         const string sql = """
             UPDATE recurring_occurrences SET due_date=@date, expected_amount=@amount, status=@status,
-                actual_amount=CASE WHEN @status='paid' THEN @amount ELSE actual_amount END,
-                matched_at=CASE WHEN @status='paid' THEN CURRENT_TIMESTAMP ELSE matched_at END,
+                transaction_id=CASE WHEN @status IN ('expected', 'skipped') THEN NULL ELSE transaction_id END,
+                actual_amount=CASE WHEN @status='paid' AND transaction_id IS NULL THEN @amount
+                    WHEN @status='paid' THEN actual_amount ELSE NULL END,
+                matched_at=CASE WHEN @status='paid' THEN coalesce(matched_at, CURRENT_TIMESTAMP) ELSE NULL END,
                 note=@note, updated_at=CURRENT_TIMESTAMP
             WHERE id=@id RETURNING recurring_item_id
             """;
@@ -562,7 +639,7 @@ public static class FinovaDataService
             ["status"] = request.Status,
             ["note"] = (object?)Clean(request.Note) ?? DBNull.Value,
         });
-        if (itemId == 0) throw new KeyNotFoundException("Recurring occurrence was not found.");
+        if (itemId == 0) throw new ResourceNotFoundException("Recurring occurrence was not found.");
         return (await GetRecurringOccurrencesAsync(request.DueDate.AddDays(-1), request.DueDate.AddDays(1), Convert.ToInt32(itemId)))
             .Single(x => x.Id == id);
     }
@@ -657,7 +734,7 @@ public static class FinovaDataService
             matched.Parameters.AddWithValue("transaction", sourceTransactionId.Value);
             await matched.ExecuteNonQueryAsync();
         }
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = await GetHouseholdTodayAsync();
         next = NormalizeNextDate(next, frequency, today.AddDays(-31));
         var horizon = today.AddMonths(18);
         for (var occurrence = 0; ; occurrence++)
@@ -681,7 +758,7 @@ public static class FinovaDataService
     public static async Task<IReadOnlyList<AccountSafetyDto>> GetAccountSafetyAsync()
     {
         var accounts = await GetAccountsAsync();
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = await GetHouseholdTodayAsync();
         var occurrences = await GetRecurringOccurrencesAsync(today.AddDays(-31), today.AddDays(400));
         var results = new List<AccountSafetyDto>();
         foreach (var account in accounts)
@@ -730,7 +807,7 @@ public static class FinovaDataService
                 reader.IsDBNull(10) ? null : reader.GetInt32(10), reader.GetString(11)));
         }
         var pools = safety.ToDictionary(kv => kv.Key, kv => kv.Value.AccountType == "credit" ? 0 : Math.Max(0, kv.Value.Balance - kv.Value.BufferAmount - kv.Value.UpcomingBills));
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = await GetHouseholdTodayAsync();
         var goals = new List<GoalDto>();
         foreach (var goal in rawGoals)
         {
@@ -757,9 +834,25 @@ public static class FinovaDataService
 
     public static async Task<GoalDto> SaveGoalAsync(int? id, SaveGoalRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Name) || request.TargetAmount <= 0) throw new ArgumentException("A goal name and positive target are required.");
+        var name = request.Name?.Trim() ?? string.Empty;
+        if (name.Length is < 1 or > 160 || request.TargetAmount <= 0) throw new ArgumentException("A goal name and positive target are required.");
+        if (request.PriorityOrder < 1) throw new ArgumentException("Goal priority must be at least one.");
+        if (request.Status is not ("active" or "completed" or "archived")) throw new ArgumentException("Goal status must be active, completed, or archived.");
+        if (string.IsNullOrWhiteSpace(request.IconKey) || request.IconKey.Length > 40 || string.IsNullOrWhiteSpace(request.ColorKey) || request.ColorKey.Length > 24)
+            throw new ArgumentException("Goal icon or colour is invalid.");
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
+        await using (var account = new NpgsqlCommand("SELECT 1 FROM accounts WHERE id=@id AND account_type <> 'credit' AND NOT is_archived", connection))
+        {
+            account.Parameters.AddWithValue("id", request.AccountId);
+            if (await account.ExecuteScalarAsync() is null) throw new ArgumentException("An active non-credit account is required for a goal.");
+        }
+        if (request.ImageId.HasValue)
+        {
+            await using var image = new NpgsqlCommand("SELECT 1 FROM goal_images WHERE id=@id", connection);
+            image.Parameters.AddWithValue("id", request.ImageId.Value);
+            if (await image.ExecuteScalarAsync() is null) throw new ArgumentException("Goal image was not found.");
+        }
         int? previousImageId = null;
         if (id.HasValue)
         {
@@ -779,7 +872,7 @@ public static class FinovaDataService
                 VALUES (@name, @description, @target, @date, @account, @priority, @icon, @color, @image, @status)
                 RETURNING id";
         await using var command = new NpgsqlCommand(sql, connection);
-        command.Parameters.AddWithValue("name", request.Name.Trim());
+        command.Parameters.AddWithValue("name", name);
         command.Parameters.AddWithValue("description", (object?)Clean(request.Description) ?? DBNull.Value);
         command.Parameters.AddWithValue("target", request.TargetAmount);
         command.Parameters.AddWithValue("date", request.TargetDate.HasValue ? request.TargetDate.Value.ToDateTime(TimeOnly.MinValue) : DBNull.Value);
@@ -791,6 +884,7 @@ public static class FinovaDataService
         command.Parameters.AddWithValue("status", request.Status);
         if (id.HasValue) command.Parameters.AddWithValue("id", id.Value);
         var savedId = Convert.ToInt32(await command.ExecuteScalarAsync());
+        if (savedId == 0) throw new ResourceNotFoundException("Goal was not found.");
         if (previousImageId.HasValue && previousImageId != request.ImageId)
         {
             await using var cleanup = new NpgsqlCommand(
@@ -803,6 +897,7 @@ public static class FinovaDataService
 
     public static async Task ReorderGoalsAsync(IReadOnlyList<int> ids)
     {
+        if (ids.Count != ids.Distinct().Count() || ids.Any(id => id <= 0)) throw new ArgumentException("Goal order contains invalid or duplicate IDs.");
         await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
         {
             for (var index = 0; index < ids.Count; index++)
@@ -810,7 +905,7 @@ public static class FinovaDataService
                 await using var command = new NpgsqlCommand("UPDATE savings_goals SET priority_order=@priority, updated_at=CURRENT_TIMESTAMP WHERE id=@id", connection, transaction);
                 command.Parameters.AddWithValue("priority", index + 1);
                 command.Parameters.AddWithValue("id", ids[index]);
-                await command.ExecuteNonQueryAsync();
+                if (await command.ExecuteNonQueryAsync() == 0) throw new ResourceNotFoundException($"Goal {ids[index]} was not found.");
             }
         });
     }
@@ -858,75 +953,115 @@ public static class FinovaDataService
     public static async Task<BudgetDto> SaveBudgetAsync(SaveBudgetRequest request)
     {
         if (request.MonthlyAmount < 0) throw new ArgumentException("Budget amount cannot be negative.");
-        var month = new DateOnly(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
+        var today = await GetHouseholdTodayAsync();
+        var month = new DateOnly(today.Year, today.Month, 1);
         const string sql = """
             INSERT INTO budget_definitions (category_id, monthly_amount, rollover_enabled, effective_from)
             VALUES (@category, @amount, @rollover, @month)
             ON CONFLICT (category_id) DO UPDATE SET monthly_amount=excluded.monthly_amount,
                 rollover_enabled=excluded.rollover_enabled, updated_at=CURRENT_TIMESTAMP, is_active=true
             RETURNING id
-            """;
+        """;
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using (var category = new NpgsqlCommand(
+            "SELECT 1 FROM categories WHERE id=@id AND kind='expense' AND NOT is_archived", connection, transaction))
+        {
+            category.Parameters.AddWithValue("id", request.CategoryId);
+            if (await category.ExecuteScalarAsync() is null) throw new ArgumentException("An active expense category is required for a budget.");
+        }
+        const string preserveSql = """
+            INSERT INTO budget_months (budget_id, month, base_amount, rollover_in, spent_amount, rollover_enabled)
+            SELECT b.id, series.month::date, b.monthly_amount, 0, 0, b.rollover_enabled
+            FROM budget_definitions b
+            CROSS JOIN LATERAL generate_series(
+                date_trunc('month', b.effective_from)::date,
+                @month::date - interval '1 month', interval '1 month') AS series(month)
+            WHERE b.category_id=@category
+            ON CONFLICT (budget_id, month) DO NOTHING
+            """;
+        await using (var preserve = new NpgsqlCommand(preserveSql, connection, transaction))
+        {
+            preserve.Parameters.AddWithValue("category", request.CategoryId);
+            preserve.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+            await preserve.ExecuteNonQueryAsync();
+        }
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("category", request.CategoryId);
         command.Parameters.AddWithValue("amount", request.MonthlyAmount);
         command.Parameters.AddWithValue("rollover", request.RolloverEnabled);
         command.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
         var id = Convert.ToInt32(await command.ExecuteScalarAsync());
+        await transaction.CommitAsync();
         return (await GetBudgetsAsync(month)).Single(b => b.Id == id);
     }
 
     public static async Task<IReadOnlyList<BudgetDto>> GetBudgetsAsync(DateOnly? requestedMonth = null)
     {
         await EnsureRecurringOccurrencesAsync();
-        var month = requestedMonth.HasValue ? new DateOnly(requestedMonth.Value.Year, requestedMonth.Value.Month, 1) : new(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1);
+        var today = await GetHouseholdTodayAsync();
+        var month = requestedMonth.HasValue ? new DateOnly(requestedMonth.Value.Year, requestedMonth.Value.Month, 1) : new(today.Year, today.Month, 1);
         var nextMonth = month.AddMonths(1);
-        var previousMonth = month.AddMonths(-1);
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         const string sql = """
             SELECT b.id, b.category_id, c.name, c.icon_key, c.color_key, b.monthly_amount, b.rollover_enabled,
-                coalesce((SELECT sum(abs(t.amount)) FROM transactions t JOIN accounts a ON a.id=t.account_id
-                    WHERE t.category_id=b.category_id AND t.amount < 0 AND NOT t.is_transfer AND NOT a.is_archived
-                    AND t.transaction_date >= @month AND t.transaction_date < @next_month), 0),
                 coalesce((SELECT sum(ro.expected_amount) FROM recurring_occurrences ro
                     JOIN recurring_items r ON r.id=ro.recurring_item_id
                     WHERE r.category_id=b.category_id AND r.kind='bill' AND r.is_active AND ro.status='expected'
                     AND ro.due_date >= @month AND ro.due_date < @next_month), 0),
-                coalesce((SELECT bm.base_amount + bm.rollover_in - bm.spent_amount FROM budget_months bm
-                    WHERE bm.budget_id=b.id AND bm.month=@previous_month), 0)
+                date_trunc('month', b.effective_from)::date
             FROM budget_definitions b JOIN categories c ON c.id=b.category_id
-            WHERE b.is_active ORDER BY c.name
+            WHERE b.is_active AND b.effective_from < @next_month ORDER BY c.name
             """;
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("next_month", nextMonth.ToDateTime(TimeOnly.MinValue));
-        command.Parameters.AddWithValue("previous_month", previousMonth.ToDateTime(TimeOnly.MinValue));
-        var raw = new List<(int Id, int CategoryId, string Name, string Icon, string Color, decimal Amount, bool Rollover, decimal Spent, decimal Scheduled, decimal PriorRemaining)>();
+        var raw = new List<BudgetDefinitionRow>();
         await using (var reader = await command.ExecuteReaderAsync())
         {
-            while (await reader.ReadAsync()) raw.Add((reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetDecimal(5), reader.GetBoolean(6), reader.GetDecimal(7), reader.GetDecimal(8), reader.GetDecimal(9)));
+            while (await reader.ReadAsync()) raw.Add(new(reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetDecimal(5), reader.GetBoolean(6), reader.GetDecimal(7), DateOnly.FromDateTime(reader.GetDateTime(8))));
         }
         var result = new List<BudgetDto>();
         foreach (var item in raw)
         {
-            var calculated = FinanceMath.CalculateBudget(item.Amount, item.Rollover, item.PriorRemaining, item.Spent);
-            result.Add(new(item.Id, item.CategoryId, item.Name, item.Icon, item.Color, item.Amount, item.Rollover,
-                calculated.RolloverIn, calculated.Available, item.Spent, item.Scheduled, calculated.Remaining - item.Scheduled, calculated.Remaining, calculated.ProgressPercent));
-            const string snapshotSql = """
-                INSERT INTO budget_months (budget_id, month, base_amount, rollover_in, spent_amount)
-                VALUES (@budget, @month, @base, @rollover, @spent)
-                ON CONFLICT (budget_id, month) DO UPDATE SET base_amount=excluded.base_amount,
-                    rollover_in=excluded.rollover_in, spent_amount=excluded.spent_amount
+            const string historySql = """
+                SELECT months.month,
+                    coalesce(bm.base_amount, @current_amount),
+                    coalesce(bm.rollover_enabled, @current_rollover),
+                    coalesce(sum(CASE WHEN t.amount < 0 AND NOT t.is_transfer AND NOT a.is_archived THEN abs(t.amount) ELSE 0 END), 0)
+                FROM generate_series(@effective::date, @month::date, interval '1 month') AS months(month)
+                LEFT JOIN budget_months bm ON bm.budget_id=@budget AND bm.month=months.month::date
+                LEFT JOIN transactions t ON t.category_id=@category
+                    AND t.transaction_date >= months.month AND t.transaction_date < months.month + interval '1 month'
+                LEFT JOIN accounts a ON a.id=t.account_id
+                GROUP BY months.month, bm.base_amount, bm.rollover_enabled
+                ORDER BY months.month
                 """;
-            await using var snapshot = new NpgsqlCommand(snapshotSql, connection);
-            snapshot.Parameters.AddWithValue("budget", item.Id);
-            snapshot.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
-            snapshot.Parameters.AddWithValue("base", item.Amount);
-            snapshot.Parameters.AddWithValue("rollover", calculated.RolloverIn);
-            snapshot.Parameters.AddWithValue("spent", item.Spent);
-            await snapshot.ExecuteNonQueryAsync();
+            await using var history = new NpgsqlCommand(historySql, connection);
+            history.Parameters.AddWithValue("effective", item.EffectiveFrom.ToDateTime(TimeOnly.MinValue));
+            history.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+            history.Parameters.AddWithValue("budget", item.Id);
+            history.Parameters.AddWithValue("category", item.CategoryId);
+            history.Parameters.AddWithValue("current_amount", item.Amount);
+            history.Parameters.AddWithValue("current_rollover", item.Rollover);
+            var priorRemaining = 0m;
+            await using var historyReader = await history.ExecuteReaderAsync();
+            while (await historyReader.ReadAsync())
+            {
+                var rowMonth = DateOnly.FromDateTime(historyReader.GetDateTime(0));
+                var baseAmount = historyReader.GetDecimal(1);
+                var rollover = historyReader.GetBoolean(2);
+                var spent = historyReader.GetDecimal(3);
+                var calculated = FinanceMath.CalculateBudget(baseAmount, rollover, priorRemaining, spent);
+                if (rowMonth == month)
+                    result.Add(new(item.Id, item.CategoryId, item.Name, item.Icon, item.Color, baseAmount, rollover,
+                        calculated.RolloverIn, calculated.Available, spent, item.Scheduled,
+                        calculated.Remaining - item.Scheduled, calculated.Remaining, calculated.ProgressPercent));
+                priorRemaining = calculated.Remaining;
+            }
         }
         return result;
     }
@@ -950,6 +1085,7 @@ public static class FinovaDataService
         while (await reader.ReadAsync()) patterns.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), DateOnly.FromDateTime(reader.GetDateTime(3)), reader.GetDecimal(4)));
         var existing = (await GetRecurringItemsAsync()).Select(r => (r.AccountId, NormalizeText(r.Name))).ToHashSet();
         var suggestions = new List<RecurringSuggestionDto>();
+        var today = await GetHouseholdTodayAsync();
         foreach (var group in patterns.GroupBy(p => (p.AccountId, Key: NormalizeText(p.Name), Kind: p.Amount > 0 ? "income" : "bill")))
         {
             var rows = group.OrderBy(x => x.Date).ToList();
@@ -963,7 +1099,7 @@ public static class FinovaDataService
             var amounts = rows.Select(x => Math.Abs(x.Amount)).ToList();
             var averageAmount = amounts.Average();
             if (averageAmount == 0 || amounts.Any(a => Math.Abs(a - averageAmount) / averageAmount > .15m)) continue;
-            var next = NormalizeNextDate(rows[^1].Date, frequency, DateOnly.FromDateTime(DateTime.UtcNow));
+            var next = NormalizeNextDate(rows[^1].Date, frequency, today);
             var confidence = Math.Min(.99m, .65m + rows.Count * .04m);
             suggestions.Add(new(rows[^1].Name, group.Key.Kind, group.Key.AccountId, rows[^1].AccountName,
                 Math.Round(averageAmount, 2), frequency, next, rows.Count, confidence));
@@ -983,7 +1119,7 @@ public static class FinovaDataService
         var included = accounts.Where(a => a.AccountType != "credit" && a.IncludeInSafeToSpend).Select(a => a.Id).ToHashSet();
         var includedSafety = safety.Where(s => included.Contains(s.AccountId)).ToList();
         var position = FinanceMath.CalculateHouseholdPosition(accounts.Select(a => a.Balance));
-        var today = DateOnly.FromDateTime(DateTime.UtcNow);
+        var today = await GetHouseholdTodayAsync();
         var creditAccountIds = accounts.Where(a => a.AccountType == "credit").Select(a => a.Id).ToHashSet();
         var nextPayday = recurring.Where(r => r.Kind == "income" && !creditAccountIds.Contains(r.AccountId))
             .Select(r => NormalizeNextDate(r.NextDate, r.Frequency, today)).OrderBy(d => d).Select(d => (DateOnly?)d).FirstOrDefault();
@@ -996,6 +1132,27 @@ public static class FinovaDataService
         return new(settings.HouseholdName, position.NetPosition, position.Assets, position.Debt, includedSafety.Sum(s => s.SafeToSpend),
             includedSafety.Sum(s => s.BufferAmount), includedSafety.Sum(s => s.UpcomingBills), includedSafety.Sum(s => s.Shortfall),
             nextPayday, safety, recent, priorityGoal, budgets.Where(b => b.ProgressPercent >= 80).OrderByDescending(b => b.ProgressPercent).Take(3).ToList(), alerts);
+    }
+
+    public static async Task<DateOnly> GetEarliestInsightsDateAsync(DateOnly end)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT min(t.transaction_date)::date
+            FROM transactions t
+            JOIN accounts a ON a.id = t.account_id
+            WHERE NOT a.is_archived AND t.transaction_date <= @end
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("end", end.ToDateTime(TimeOnly.MaxValue));
+        var value = await command.ExecuteScalarAsync();
+        return value switch
+        {
+            DateOnly earliest => earliest,
+            DateTime earliest => DateOnly.FromDateTime(earliest),
+            _ => end,
+        };
     }
 
     public static async Task<InsightsDto> GetInsightsAsync(DateOnly start, DateOnly end)
@@ -1060,11 +1217,13 @@ public static class FinovaDataService
     public static async Task<IReadOnlyList<SearchResultDto>> SearchAsync(string query)
     {
         if (string.IsNullOrWhiteSpace(query)) return [];
+        if (query.Length > 200) throw new ArgumentException("Search text must be no longer than 200 characters.");
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         const string sql = """
             (SELECT 'transaction' AS type, t.id, coalesce(t.payee, t.memo, 'Transaction') AS title,
-                a.name || ' · ' || to_char(t.amount, 'FM£999,999,990.00') AS subtitle, '/transactions' AS route
+                a.name || ' · ' || to_char(t.amount, 'FM999,999,990.00') || ' ' ||
+                    (SELECT currency_code FROM household_settings WHERE id=1) AS subtitle, '/transactions' AS route
              FROM transactions t JOIN accounts a ON a.id=t.account_id
              WHERE t.payee ILIKE @query OR t.memo ILIKE @query ORDER BY t.transaction_date DESC LIMIT 6)
             UNION ALL
@@ -1130,10 +1289,13 @@ public static class FinovaDataService
     {
         var points = new List<TrendPointDto>();
         var known = openingBalance;
-        for (var date = start; date <= end; date = date.AddDays(1))
+        var dayCount = end.DayNumber - start.DayNumber + 1;
+        var sampleInterval = Math.Max(1, (int)Math.Ceiling(dayCount / 365d));
+        for (var offset = 0; offset < dayCount; offset++)
         {
+            var date = start.AddDays(offset);
             if (changes.TryGetValue(date, out var value)) known = value;
-            if (date == start || date == end || date.DayNumber % 3 == 0) points.Add(new(date, known));
+            if (offset == 0 || offset == dayCount - 1 || offset % sampleInterval == 0) points.Add(new(date, known));
         }
         return points;
     }
@@ -1180,9 +1342,10 @@ public static class FinovaDataService
 
     private static void ValidateAccount(string type, decimal safeZone, string name, bool isShared, string? primaryHolder, string? secondaryHolder, decimal? creditLimit)
     {
-        if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Account name is required.");
-        if (string.IsNullOrWhiteSpace(primaryHolder)) throw new ArgumentException("An account holder name is required.");
+        if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 160) throw new ArgumentException("Account name must be between 1 and 160 characters.");
+        if (string.IsNullOrWhiteSpace(primaryHolder) || primaryHolder.Length > 160) throw new ArgumentException("An account holder name is required and must be no longer than 160 characters.");
         if (isShared && string.IsNullOrWhiteSpace(secondaryHolder)) throw new ArgumentException("Both account holder names are required for a joint account.");
+        if (secondaryHolder?.Length > 160) throw new ArgumentException("Account holder names must be no longer than 160 characters.");
         if (!AccountTypes.Contains(type)) throw new ArgumentException("Unsupported account type.");
         if (safeZone < 0) throw new ArgumentException("Safe-zone amount cannot be negative.");
         if (creditLimit < 0) throw new ArgumentException("Credit limit cannot be negative.");
@@ -1193,8 +1356,16 @@ public static class FinovaDataService
         if (string.IsNullOrWhiteSpace(request.Name) || request.Amount <= 0) throw new ArgumentException("Name and positive amount are required.");
         if (request.Kind is not ("bill" or "income")) throw new ArgumentException("Recurring kind must be bill or income.");
         if (!Frequencies.Contains(request.Frequency)) throw new ArgumentException("Unsupported frequency.");
+        if (request.Source is not ("manual" or "suggestion" or "transaction")) throw new ArgumentException("Unsupported recurring source.");
         if (request.AmountTolerance < 0) throw new ArgumentException("Amount tolerance cannot be negative.");
         if (request.DateWindowDays is < 0 or > 31) throw new ArgumentException("Date window must be between 0 and 31 days.");
+    }
+
+    private static void ValidateLastFour(string? value)
+    {
+        var cleaned = Clean(value);
+        if (cleaned is not null && (cleaned.Length != 4 || !cleaned.All(char.IsDigit)))
+            throw new ArgumentException("Last four digits must contain exactly four numbers.");
     }
 
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -1211,4 +1382,6 @@ public static class FinovaDataService
     private sealed record GoalRow(int Id, string Name, string? Description, decimal TargetAmount, DateOnly? TargetDate,
         int AccountId, string AccountName, int Priority, string IconKey, string ColorKey, int? ImageId, string Status);
     private sealed record PatternRow(int AccountId, string AccountName, string Name, DateOnly Date, decimal Amount);
+    private sealed record BudgetDefinitionRow(int Id, int CategoryId, string Name, string Icon, string Color,
+        decimal Amount, bool Rollover, decimal Scheduled, DateOnly EffectiveFrom);
 }
