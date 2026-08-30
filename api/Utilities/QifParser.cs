@@ -60,7 +60,7 @@ namespace financesApi.utilities
 
         private static void AddIfValid(QifTransactionDto? transaction, ICollection<TransactionDto> results)
         {
-            if (transaction is not null && transaction.Date != DateTime.MinValue && !string.IsNullOrWhiteSpace(transaction.Payee))
+            if (transaction is not null && transaction.Date != DateTime.MinValue && transaction.Amount != 0 && !string.IsNullOrWhiteSpace(transaction.Payee))
                 results.Add(transaction);
         }
 
@@ -113,8 +113,7 @@ namespace financesApi.utilities
                 return amount;
             }
 
-            Console.WriteLine($"Failed to parse QIF amount: {amountStr}");
-            return 0;
+            throw new InvalidDataException($"QIF transaction has an invalid amount: {amountStr}");
         }
     }
 }
