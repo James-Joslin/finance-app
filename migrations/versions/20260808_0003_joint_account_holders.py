@@ -30,3 +30,4 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_column("accounts", "secondary_holder_name")
+    op.drop_column("accounts", "primary_holder_name")
