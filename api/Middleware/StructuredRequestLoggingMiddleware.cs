@@ -39,6 +39,8 @@ public sealed class StructuredRequestLoggingMiddleware(
             || path.StartsWithSegments("/status/ready")
             || path.StartsWithSegments("/status/health");
         if (isProbe) return statusCode >= 500 ? LogLevel.Warning : LogLevel.Debug;
-        return statusCode >= 500 ? LogLevel.Error : LogLevel.Information;
+        if (statusCode >= 500) return LogLevel.Error;
+        if (statusCode >= 400) return LogLevel.Warning;
+        return LogLevel.Information;
     }
 }

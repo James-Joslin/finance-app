@@ -249,14 +249,15 @@ Snapshot or copy the `azurite_prod_data` volume off-host for host-level disaster
 | `API_PORT` | Development host API port | `5153` |
 | `FRONTEND_PORT` | Development host frontend port | `5173` |
 | `APP_PORT` | Production Nginx host port | `8080` |
-
-Real `.env.dev` and `.env.prod` files are ignored by Git. Only the example files should be committed.
-
 | `AZURITE_ACCOUNT_NAME` | Private Blob account used by the backup service | `finovadev` |
 | `AZURITE_ACCOUNT_KEY` | Base64 account key shared by Azurite and backup tooling | Development emulator key |
 | `BACKUP_BLOB_CONTAINER` | Blob container that holds database dumps | `database-backups` |
 | `BACKUP_CRON` | Five-field UTC backup schedule | `0 2 * * *` |
 | `BACKUP_RETENTION_DAYS` | Age after which matching database blobs are deleted | `14` |
+
+Real `.env.dev` and `.env.prod` files are ignored by Git. Only the example files should be committed.
+
+
 ## Schema
 
 The initial Alembic revision creates the dump-derived `people`, `accounts`, and `transactions`

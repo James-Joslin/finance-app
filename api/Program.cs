@@ -17,6 +17,8 @@ builder.Logging.AddJsonConsole(options =>
     options.UseUtcTimestamp = true;
     options.JsonWriterOptions = new JsonWriterOptions { Indented = false };
 });
+builder.Logging.AddFilter(
+    "Microsoft.Extensions.Diagnostics.HealthChecks.DefaultHealthCheckService", LogLevel.Critical);
 
 // Add services to the container.
 builder.Services.AddControllers().AddJsonOptions(options =>
