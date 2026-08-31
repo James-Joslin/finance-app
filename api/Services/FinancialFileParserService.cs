@@ -13,6 +13,14 @@ namespace financesApi.services
     {
         public static List<TransactionDto> Parse(Stream fileStream, string fileName)
         {
+            var parsed = ParseRows(fileStream, fileName);
+            var rejected = parsed.Rows.FirstOrDefault(row => row.Transaction is null);
+            if (rejected is not null) throw new InvalidDataException(rejected.ErrorMessage);
+            return parsed.Rows.Select(row => row.Transaction!).ToList();
+        }
+
+        public static FinancialImportParseResult ParseRows(Stream fileStream, string fileName)
+        {
             // Buffer the stream so we can read it multiple times if needed
             using var memoryStream = new MemoryStream();
             fileStream.CopyTo(memoryStream);
@@ -30,29 +38,33 @@ namespace financesApi.services
             
             Console.WriteLine($"Processing file: {fileName} as type: {extension}");
             
-            List<TransactionDto> results;
+            IReadOnlyList<ParsedFinancialRow> rows;
+            string fileType;
             switch (extension)
             {
                 case ".ofx":
-                    var ofxResults = OfxParser.Parse(memoryStream);
-                    results = ofxResults.Cast<TransactionDto>().ToList();
+                    rows = OfxParser.ParseRows(memoryStream);
+                    fileType = "OFX";
                     break;
                     
                 case ".qif":
-                    results = QifParser.Parse(memoryStream);
+                    rows = QifParser.ParseRows(memoryStream);
+                    fileType = "QIF";
                     break;
 
                 case ".pdf":
                     if (!HasPdfSignature(memoryStream))
                         throw new InvalidDataException("The uploaded file has a .pdf name but is not a valid PDF file.");
                     memoryStream.Position = 0;
-                    results = HalifaxPdfParser.Parse(memoryStream);
+                    rows = HalifaxPdfParser.ParseRows(memoryStream);
+                    fileType = "PDF";
                     break;
                     
                 default:
                     throw new NotSupportedException($"File type {extension} is not supported. Please upload an OFX, QIF, or Halifax PDF file.");
             }
-            return results;
+            if (rows.Count == 0) throw new InvalidDataException("No transaction rows were found in the file.");
+            return new FinancialImportParseResult(fileType, rows);
         }
 
         private static bool HasPdfSignature(Stream stream)
