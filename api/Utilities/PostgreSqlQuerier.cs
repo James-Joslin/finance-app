@@ -10,7 +10,7 @@ namespace financesApi.utilities
     // PostgreSQL Data Querier - replaces your SQL Server version
     public static class PostgreSqlQuerier
     {
-        public static NpgsqlConnection BuildConnection()
+        public static NpgsqlConnection BuildConnection(int connectionTimeoutSeconds = 30)
         {
             try
             {
@@ -22,14 +22,13 @@ namespace financesApi.utilities
                     Username = Environment.GetEnvironmentVariable("POSTGRES_USER"),
                     Password = Environment.GetEnvironmentVariable("POSTGRES_PASSWORD"),
                     SslMode = Enum.Parse<SslMode>(Environment.GetEnvironmentVariable("POSTGRES_SSL_MODE") ?? "Prefer"),
-                    Timeout = 30
+                    Timeout = connectionTimeoutSeconds
                 }.ConnectionString;
 
                 return new NpgsqlConnection(connectionString);
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"PostgreSQL Connection Error: {ex}");
                 throw;
             }
         }
@@ -49,9 +48,8 @@ namespace financesApi.utilities
                 dataTable.Load(reader);
                 return dataTable;
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"PostgreSQL Query Error: {ex}");
                 throw;
             }
         }
@@ -75,9 +73,8 @@ namespace financesApi.utilities
                 dataTable.Load(reader);
                 return dataTable;
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"PostgreSQL Write Error: {ex}");
                 throw;
             }
         }
@@ -102,9 +99,8 @@ namespace financesApi.utilities
 
                 return await command.ExecuteNonQueryAsync();
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"PostgreSQL Write Error: {ex}");
                 throw;
             }
         }
@@ -130,9 +126,8 @@ namespace financesApi.utilities
                 var result = await command.ExecuteScalarAsync();
                 return result is T ? (T)result : default(T);
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"PostgreSQL Scalar Error: {ex}");
                 throw;
             }
         }

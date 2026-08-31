@@ -49,7 +49,6 @@ public static partial class HalifaxPdfParser
             throw new InvalidDataException($"PDF statements are limited to {MaximumPages} pages.");
 
         var statementRows = new List<StatementRow>();
-        var maskedLayoutDiagnostics = new List<string>();
         var isHalifax = false;
         var readableWords = 0;
         foreach (var page in document.GetPages())
@@ -60,10 +59,6 @@ public static partial class HalifaxPdfParser
             isHalifax |= pageText.Contains("HALIFAX", StringComparison.OrdinalIgnoreCase)
                 || pageText.Contains("Bank of Scotland", StringComparison.OrdinalIgnoreCase);
             var pageRows = ExtractRows(page.Number, page.Width, words).ToList();
-            maskedLayoutDiagnostics.AddRange(DescribeMaskedTransactionLayout(page.Number, words));
-            var datedRows = pageRows.Count(row => TryParseDate(row.Date, out _));
-            var amountRows = pageRows.Count(row => row.MoneyIn.HasValue || row.MoneyOut.HasValue);
-            Console.WriteLine($"Halifax PDF page {page.Number}: extracted {words.Count} words and {pageRows.Count} candidate transaction rows ({datedRows} dated, {amountRows} with an amount).");
             statementRows.AddRange(pageRows);
         }
 
@@ -75,8 +70,6 @@ public static partial class HalifaxPdfParser
         var parsedRows = ParseStatementRowResults(statementRows);
         if (parsedRows.Count == 0)
         {
-            Console.WriteLine("Halifax PDF parsing failed; masked transaction-table layout follows. L/D/S are letter, digit, and symbol counts only.");
-            foreach (var diagnostic in maskedLayoutDiagnostics) Console.WriteLine(diagnostic);
             throw new InvalidDataException(
                 $"The Halifax PDF was readable, but no transaction rows were recognised across {document.NumberOfPages} page(s). " +
                 "Check that this is a current-account statement rather than a statement summary or scanned document.");
@@ -126,7 +119,6 @@ public static partial class HalifaxPdfParser
             NormaliseLabel(line.Text).Contains("yourtransactions", StringComparison.Ordinal));
         var tableTop = header?.Y ?? transactionHeading?.Y;
         var layout = BuildColumnLayout(lines, header, pageWidth);
-        Console.WriteLine($"Halifax PDF page {pageNumber}: table header {(header is null ? "not found" : "found")}; using {layout.Source} columns.");
 
         if (header is not null && layout.Source == "header-derived")
         {
@@ -199,8 +191,6 @@ public static partial class HalifaxPdfParser
             var rowBottom = rowIndex == dateAnchors.Count - 1 ? bottom : (anchor.Y + dateAnchors[rowIndex + 1].Y) / 2;
             var cells = BuildMatrixCells(tableWords, layout, rowTop, rowBottom);
             var row = BuildStatementRow(pageNumber, anchor.Text, cells);
-            Console.WriteLine($"Halifax matrix p{pageNumber}: cell lengths [{string.Join(',', cells.Select(cell => cell.Length))}], " +
-                $"money parsed [{row.MoneyIn.HasValue},{row.MoneyOut.HasValue},{row.Balance.HasValue}].");
             yield return row;
         }
     }
