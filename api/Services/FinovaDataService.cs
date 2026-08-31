@@ -1082,24 +1082,25 @@ public static class FinovaDataService
 
     public static async Task<IReadOnlyList<RecurringSuggestionDto>> GetRecurringSuggestionsAsync()
     {
+        var today = await GetHouseholdTodayAsync();
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         const string sql = """
             SELECT t.account_id, a.name, coalesce(nullif(trim(t.payee), ''), nullif(trim(t.memo), ''), 'Unknown'),
                 t.transaction_date, t.amount
             FROM transactions t JOIN accounts a ON a.id=t.account_id
-            WHERE t.transaction_date >= CURRENT_DATE - interval '400 days' AND NOT t.is_transfer
+            WHERE t.transaction_date >= @cutoff AND NOT t.is_transfer
                 AND coalesce(t.transaction_type, '') <> 'Initial Deposit' AND NOT a.is_archived
                 AND (a.account_type <> 'credit' OR t.amount < 0)
             ORDER BY t.account_id, lower(coalesce(t.payee, t.memo)), t.transaction_date
             """;
         await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("cutoff", today.AddDays(-400).ToDateTime(TimeOnly.MinValue));
         await using var reader = await command.ExecuteReaderAsync();
         var patterns = new List<PatternRow>();
         while (await reader.ReadAsync()) patterns.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), DateOnly.FromDateTime(reader.GetDateTime(3)), reader.GetDecimal(4)));
         var existing = (await GetRecurringItemsAsync()).Select(r => (r.AccountId, NormalizeText(r.Name))).ToHashSet();
         var suggestions = new List<RecurringSuggestionDto>();
-        var today = await GetHouseholdTodayAsync();
         foreach (var group in patterns.GroupBy(p => (p.AccountId, Key: NormalizeText(p.Name), Kind: p.Amount > 0 ? "income" : "bill")))
         {
             var rows = group.OrderBy(x => x.Date).ToList();
