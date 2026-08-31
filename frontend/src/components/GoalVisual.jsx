@@ -91,6 +91,29 @@ const colors = {
     slate: ['#5d7896', '#abc0d5'],
 };
 
+function toSafeImageUrl(value) {
+    if (typeof value !== 'string' || !value.trim()) return null;
+
+    try {
+        const parsed = new URL(value, window.location.origin);
+        if (
+            parsed.protocol === 'blob:' &&
+            parsed.origin === window.location.origin
+        )
+            return parsed.href;
+        if (
+            (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+            parsed.origin === window.location.origin
+        ) {
+            return parsed.href;
+        }
+    } catch {
+        return null;
+    }
+
+    return null;
+}
+
 export function GoalVisual({
     iconKey = 'general_target',
     colorKey = 'blue',
@@ -102,11 +125,12 @@ export function GoalVisual({
         goalVisuals.find((item) => item.key === iconKey) || goalVisuals[0];
     const Icon = definition.Icon;
     const palette = colors[colorKey] || colors.blue;
-    if (imageUrl) {
+    const safeImageUrl = toSafeImageUrl(imageUrl);
+    if (safeImageUrl) {
         return (
             <img
                 className={'goal-visual goal-visual-' + size + ' goal-image'}
-                src={imageUrl}
+                src={safeImageUrl}
                 alt={label || definition.title}
             />
         );
