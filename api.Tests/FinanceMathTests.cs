@@ -82,4 +82,25 @@ public sealed class FinanceMathTests
         Assert.Equal(1200m, result.Debt);
         Assert.Equal(2600m, result.NetPosition);
     }
+
+    [Fact]
+    public void ImportBalancesReverseNewestFirstRowsIntoChronologicalOrder()
+    {
+        var entries = new[]
+        {
+            new ImportBalanceEntry(1, new DateTime(2026, 8, 31), -20.19m, true),
+            new ImportBalanceEntry(2, new DateTime(2026, 8, 10), -8.40m, true),
+            new ImportBalanceEntry(3, new DateTime(2026, 8, 10), -39.80m, true),
+            new ImportBalanceEntry(4, new DateTime(2026, 8, 10), 72.80m, true),
+            new ImportBalanceEntry(5, new DateTime(2026, 8, 10), -27.50m, true),
+        };
+
+        var balances = FinanceMath.CalculateImportBalances(206.99m, entries);
+
+        Assert.Equal(179.49m, balances[5]);
+        Assert.Equal(252.29m, balances[4]);
+        Assert.Equal(212.49m, balances[3]);
+        Assert.Equal(204.09m, balances[2]);
+        Assert.Equal(183.90m, balances[1]);
+    }
 }

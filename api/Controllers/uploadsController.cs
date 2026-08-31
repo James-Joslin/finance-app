@@ -33,27 +33,16 @@ public sealed class uploadsController : ControllerBase
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<IActionResult> uploadTransactions([FromForm] OfxUploadRequest request)
     {
-        try
+        var batch = await TransactionImportService.ImportImmediatelyAsync(request.OfxContent, request.AccountId);
+        return Ok(new
         {
-            if (request.OfxContent.Length == 0) return BadRequest(new { error = "The uploaded file is empty." });
-            using var stream = request.OfxContent.OpenReadStream();
-            var parsed = FinancialFileParserService.Parse(stream, request.OfxContent.FileName);
-            if (parsed.Count == 0) return BadRequest(new { error = "No valid transactions found in the file." });
-            var inserted = await GenericDataService.FilterAndInsertTransactionsAsync(parsed, request.AccountId);
-            await FinovaDataService.ReconcileRecurringTransactionsAsync(request.AccountId,
-                parsed.Min(item => DateOnly.FromDateTime(item.Date)), parsed.Max(item => DateOnly.FromDateTime(item.Date)));
-            return Ok(new
-            {
-                success = true,
-                message = $"Imported {inserted.Count} transactions and skipped {parsed.Count - inserted.Count} duplicates.",
-                accountId = request.AccountId,
-                transactionCount = inserted.Count,
-                skipped = parsed.Count - inserted.Count,
-            });
-        }
-        catch (Exception exception) when (exception is InvalidDataException or NotSupportedException or ArgumentException)
-        {
-            return BadRequest(new { error = exception.Message });
-        }
+            success = true,
+            message = $"Imported {batch.Imported} transactions and skipped {batch.Skipped} duplicates.",
+            accountId = request.AccountId,
+            transactionCount = batch.Imported,
+            skipped = batch.Skipped,
+            rejected = batch.Rejected,
+            batchId = batch.Id,
+        });
     }
 }

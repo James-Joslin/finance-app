@@ -16,9 +16,17 @@ public static partial class HalifaxPdfParser
 
     public static List<TransactionDto> Parse(Stream pdfStream)
     {
+        var rows = ParseRows(pdfStream);
+        var rejected = rows.FirstOrDefault(row => row.Transaction is null);
+        if (rejected is not null) throw new InvalidDataException(rejected.ErrorMessage);
+        return rows.Select(row => row.Transaction!).ToList();
+    }
+
+    public static IReadOnlyList<ParsedFinancialRow> ParseRows(Stream pdfStream)
+    {
         try
         {
-            return ParseDocument(pdfStream);
+            return ParseDocumentRows(pdfStream);
         }
         catch (InvalidDataException)
         {
@@ -30,7 +38,7 @@ public static partial class HalifaxPdfParser
         }
     }
 
-    private static List<TransactionDto> ParseDocument(Stream pdfStream)
+    private static IReadOnlyList<ParsedFinancialRow> ParseDocumentRows(Stream pdfStream)
     {
         using var document = PdfDocument.Open(pdfStream, new ParsingOptions
         {
@@ -64,8 +72,8 @@ public static partial class HalifaxPdfParser
         if (!isHalifax)
             throw new InvalidDataException("This PDF does not look like a Halifax bank statement.");
 
-        var transactions = ParseStatementRows(statementRows).Cast<TransactionDto>().ToList();
-        if (transactions.Count == 0)
+        var parsedRows = ParseStatementRowResults(statementRows);
+        if (parsedRows.Count == 0)
         {
             Console.WriteLine("Halifax PDF parsing failed; masked transaction-table layout follows. L/D/S are letter, digit, and symbol counts only.");
             foreach (var diagnostic in maskedLayoutDiagnostics) Console.WriteLine(diagnostic);
@@ -73,18 +81,27 @@ public static partial class HalifaxPdfParser
                 $"The Halifax PDF was readable, but no transaction rows were recognised across {document.NumberOfPages} page(s). " +
                 "Check that this is a current-account statement rather than a statement summary or scanned document.");
         }
-        return transactions;
+        return parsedRows;
     }
 
     internal static List<HalifaxPdfTransactionDto> ParseStatementRows(IEnumerable<StatementRow> rows)
     {
-        var results = new List<HalifaxPdfTransactionDto>();
+        var parsed = ParseStatementRowResults(rows);
+        var rejected = parsed.FirstOrDefault(row => row.Transaction is null);
+        if (rejected is not null) throw new InvalidDataException(rejected.ErrorMessage);
+        return parsed.Select(row => (HalifaxPdfTransactionDto)row.Transaction!).ToList();
+    }
+
+    private static IReadOnlyList<ParsedFinancialRow> ParseStatementRowResults(IEnumerable<StatementRow> rows)
+    {
+        var results = new List<ParsedFinancialRow>();
+        var ordinal = 0;
         PendingTransaction? pending = null;
         foreach (var row in rows)
         {
             if (TryParseDate(row.Date, out var date))
             {
-                Finalise(pending, results);
+                if (pending is not null) results.Add(Finalise(pending, ++ordinal));
                 pending = new(date, Clean(row.Description), CleanCode(row.Type), row.MoneyIn, row.MoneyOut, row.Balance, row.Page);
                 continue;
             }
@@ -97,7 +114,7 @@ public static partial class HalifaxPdfParser
             pending.MoneyOut ??= row.MoneyOut;
             pending.Balance ??= row.Balance;
         }
-        Finalise(pending, results);
+        if (pending is not null) results.Add(Finalise(pending, ++ordinal));
         return results;
     }
 
@@ -299,24 +316,29 @@ public static partial class HalifaxPdfParser
         ? word.Letters[0].StartBaseLine.Y
         : word.BoundingBox.Bottom;
 
-    private static void Finalise(PendingTransaction? pending, ICollection<HalifaxPdfTransactionDto> results)
+    private static ParsedFinancialRow Finalise(PendingTransaction pending, int ordinal)
     {
-        if (pending is null) return;
+        var label = $"PDF page {pending.Page}, transaction {ordinal}";
+        var displayAmount = (pending.MoneyIn ?? pending.MoneyOut)?.ToString("0.00", CultureInfo.InvariantCulture);
+        var displayDate = pending.Date.ToString("dd MMM yyyy", CultureInfo.GetCultureInfo("en-GB"));
         var moneyIn = pending.MoneyIn ?? 0;
         var moneyOut = pending.MoneyOut ?? 0;
         if (moneyIn > 0 && moneyOut > 0)
-            throw new InvalidDataException($"Halifax row on {pending.Date:dd MMM yyyy} has both Money In and Money Out values.");
+            return new(ordinal, label, null, displayDate, displayAmount, pending.Description, null,
+                "ambiguous_amount", $"Halifax row on {pending.Date:dd MMM yyyy} has both Money In and Money Out values.");
         if (moneyIn <= 0 && moneyOut <= 0)
-            throw new InvalidDataException($"Could not read the amount for a Halifax transaction on {pending.Date:dd MMM yyyy}.");
+            return new(ordinal, label, null, displayDate, displayAmount, pending.Description, null,
+                "invalid_amount", $"Could not read the amount for a Halifax transaction on {pending.Date:dd MMM yyyy}.");
         if (string.IsNullOrWhiteSpace(pending.Description))
-            throw new InvalidDataException($"Could not read the description for a Halifax transaction on {pending.Date:dd MMM yyyy}.");
+            return new(ordinal, label, null, displayDate, displayAmount, pending.Description, null,
+                "missing_description", $"Could not read the description for a Halifax transaction on {pending.Date:dd MMM yyyy}.");
 
         var amount = moneyIn > 0 ? moneyIn : -moneyOut;
         var balance = pending.Balance ?? 0;
         var code = CleanCode(pending.Type);
         var hashInput = FormattableString.Invariant($"{pending.Date:yyyy-MM-dd}|{amount:0.00}|{pending.Description}|{code}|{balance:0.00}");
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(hashInput))).ToLowerInvariant()[..32];
-        results.Add(new HalifaxPdfTransactionDto
+        return new(ordinal, label, new HalifaxPdfTransactionDto
         {
             Date = pending.Date,
             Amount = amount,
@@ -326,7 +348,7 @@ public static partial class HalifaxPdfParser
             TransactionCode = code,
             StatementBalance = balance,
             Category = code == "TFR" ? "Transfers" : moneyIn > 0 ? "Income" : null,
-        });
+        }, displayDate, displayAmount, pending.Description, null);
     }
 
     private static bool TryParseDate(string value, out DateTime date)

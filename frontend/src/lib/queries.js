@@ -15,6 +15,8 @@ export const queryKeys = {
     budgets: ['budgets'],
     safety: ['safety'],
     transactions: (params) => ['transactions', params],
+    imports: (params) => ['transaction-imports', params],
+    importRows: (batchId, params) => ['transaction-import-rows', batchId, params],
     insights: (params) => ['insights', params],
 };
 
@@ -54,6 +56,16 @@ export const useInsights = (params) => useQuery({
     queryKey: queryKeys.insights(params),
     queryFn: () => get('/insights', params),
 });
+export const useImports = (params, enabled = true) => useQuery({
+    queryKey: queryKeys.imports(params),
+    queryFn: () => get('/transactions/imports', params),
+    enabled,
+});
+export const useImportRows = (batchId, params, enabled = true) => useQuery({
+    queryKey: queryKeys.importRows(batchId, params),
+    queryFn: () => get('/transactions/imports/' + batchId + '/rows', params),
+    enabled: enabled && Boolean(batchId),
+});
 
 export const useFinovaMutation = (mutationFn, invalidate = []) => {
     const client = useQueryClient();
@@ -74,6 +86,9 @@ export const mutations = {
         patch('/transactions/' + id + '/category', { categoryId, saveRule }),
     deleteTransactionRule: (id) => del('/categories/rules/' + id),
     importTransactions: (form) => post('/transactions/import', form, { headers: { 'Content-Type': 'multipart/form-data' } }),
+    previewImport: (form) => post('/transactions/import/preview', form, { headers: { 'Content-Type': 'multipart/form-data' } }),
+    commitImport: (id) => post('/transactions/imports/' + id + '/commit'),
+    undoImport: (id) => post('/transactions/imports/' + id + '/undo'),
     createGoal: (body) => post('/goals', body),
     updateGoal: ({ id, body }) => put('/goals/' + id, body),
     reorderGoals: (orderedIds) => post('/goals/reorder', { orderedIds }),
