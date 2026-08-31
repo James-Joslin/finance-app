@@ -19,6 +19,53 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.36.0
+    environment:
+      AZURITE_ACCOUNTS: ${AZURITE_ACCOUNT_NAME:-finovadev}:${AZURITE_ACCOUNT_KEY:-Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==}
+    command:
+      - azurite-blob
+      - --blobHost
+      - 0.0.0.0
+      - --location
+      - /data
+      - --disableTelemetry
+    volumes:
+      - azurite_dev_data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "const n=require('net');const s=n.connect(10000,'127.0.0.1',()=>{s.end();process.exit(0)});s.on('error',()=>process.exit(1))"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    restart: unless-stopped
+
+  backup:
+    build:
+      context: ./operations
+    environment:
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-finances_db}
+      POSTGRES_USER: ${POSTGRES_USER:-finances_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-finances_dev_password}
+      AZURITE_ACCOUNT_NAME: ${AZURITE_ACCOUNT_NAME:-finovadev}
+      AZURITE_ACCOUNT_KEY: ${AZURITE_ACCOUNT_KEY:-Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==}
+      BACKUP_BLOB_ENDPOINT: http://azurite:10000/${AZURITE_ACCOUNT_NAME:-finovadev}
+      BACKUP_BLOB_CONTAINER: ${BACKUP_BLOB_CONTAINER:-database-backups}
+      BACKUP_CRON: ${BACKUP_CRON:-0 2 * * *}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-14}
+    depends_on:
+      db:
+        condition: service_healthy
+      azurite:
+        condition: service_healthy
+    restart: unless-stopped
+
   migrations:
     build:
       context: ./migrations
@@ -61,7 +108,7 @@ services:
       migrations:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/status/health"]
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/status/ready"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -93,5 +140,6 @@ services:
 
 volumes:
   postgres_dev_data:
+  azurite_dev_data:
   api_nuget_cache:
   frontend_node_modules:
