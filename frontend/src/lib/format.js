@@ -1,28 +1,46 @@
-const preferences = { currencyCode: 'GBP', locale: 'en-GB', timezone: 'Europe/London' };
+const preferences = {
+    currencyCode: 'GBP',
+    locale: 'en-GB',
+    timezone: 'Europe/London',
+};
 
 export function setFormatPreferences(settings = {}) {
-    preferences.currencyCode = currencyCode(settings.currencyCode || preferences.currencyCode);
-    preferences.locale = typeof settings.locale === 'string' && settings.locale.trim() ? settings.locale.trim() : 'en-GB';
-    preferences.timezone = typeof settings.timezone === 'string' && settings.timezone.trim() ? settings.timezone.trim() : 'Europe/London';
+    preferences.currencyCode = currencyCode(
+        settings.currencyCode || preferences.currencyCode
+    );
+    preferences.locale =
+        typeof settings.locale === 'string' && settings.locale.trim()
+            ? settings.locale.trim()
+            : 'en-GB';
+    preferences.timezone =
+        typeof settings.timezone === 'string' && settings.timezone.trim()
+            ? settings.timezone.trim()
+            : 'Europe/London';
 }
 
 export const money = (value, currency) =>
     new Intl.NumberFormat(preferences.locale, {
         style: 'currency',
-        currency: currencyCode(typeof currency === 'string' ? currency : preferences.currencyCode),
+        currency: currencyCode(
+            typeof currency === 'string' ? currency : preferences.currencyCode
+        ),
         maximumFractionDigits: 2,
     }).format(Number(value || 0));
 
 export const compactMoney = (value, currency) =>
     new Intl.NumberFormat(preferences.locale, {
         style: 'currency',
-        currency: currencyCode(typeof currency === 'string' ? currency : preferences.currencyCode),
+        currency: currencyCode(
+            typeof currency === 'string' ? currency : preferences.currencyCode
+        ),
         notation: 'compact',
         maximumFractionDigits: 1,
     }).format(Number(value || 0));
 
 const currencyCode = (value) =>
-    typeof value === 'string' && /^[a-z]{3}$/i.test(value) ? value.toUpperCase() : 'GBP';
+    typeof value === 'string' && /^[a-z]{3}$/i.test(value)
+        ? value.toUpperCase()
+        : 'GBP';
 
 export const shortDate = (value) => {
     if (!value) return 'Not set';
@@ -54,7 +72,11 @@ export const apiError = (error) =>
 export function todayIso(now = new Date()) {
     const parts = new Intl.DateTimeFormat('en-CA', {
         timeZone: preferences.timezone,
-        year: 'numeric', month: '2-digit', day: '2-digit',
-    }).formatToParts(now).reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+    })
+        .formatToParts(now)
+        .reduce((result, part) => ({ ...result, [part.type]: part.value }), {});
     return `${parts.year}-${parts.month}-${parts.day}`;
 }

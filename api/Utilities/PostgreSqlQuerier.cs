@@ -55,7 +55,7 @@ namespace financesApi.utilities
                 throw;
             }
         }
-        
+
         public static async Task<DataTable> ExecuteParameterisedQueryAsync(string query, Dictionary<string, object>? parameters = null)
         {
             try
@@ -118,7 +118,7 @@ namespace financesApi.utilities
                 await connection.OpenAsync();
 
                 using var command = new NpgsqlCommand(query, connection);
-                
+
                 if (parameters != null)
                 {
                     foreach (var param in parameters)
@@ -142,7 +142,7 @@ namespace financesApi.utilities
         {
             using var connection = BuildConnection();
             await connection.OpenAsync();
-            
+
             using var transaction = await connection.BeginTransactionAsync();
             try
             {

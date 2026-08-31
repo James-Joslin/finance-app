@@ -19,10 +19,21 @@ class Boundary extends Component {
             <div className="page-state error-state" role="alert">
                 <AlertTriangle />
                 <h2>This page hit an unexpected problem</h2>
-                <p>Your data is safe. You can retry the page or continue back to Overview without refreshing Finova.</p>
+                <p>
+                    Your data is safe. You can retry the page or continue back
+                    to Overview without refreshing Finova.
+                </p>
                 <div className="modal-actions">
-                    <Link className="button secondary" to="/">Back to Overview</Link>
-                    <button className="button" type="button" onClick={() => this.setState({ error: null })}><RotateCcw /> Retry page</button>
+                    <Link className="button secondary" to="/">
+                        Back to Overview
+                    </Link>
+                    <button
+                        className="button"
+                        type="button"
+                        onClick={() => this.setState({ error: null })}
+                    >
+                        <RotateCcw /> Retry page
+                    </button>
                 </div>
             </div>
         );

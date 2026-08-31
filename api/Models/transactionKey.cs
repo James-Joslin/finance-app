@@ -17,11 +17,11 @@ namespace financesApi.models
         public bool Equals(TransactionKey? other)
         {
             if (other == null) return false;
-            
+
             // For OFX: Use FitId if available
             if (!string.IsNullOrEmpty(FitId) && !string.IsNullOrEmpty(other.FitId))
                 return FitId == other.FitId;
-            
+
             // For QIF or fallback: Use date, amount, and payee
             return Date == other.Date &&
                    Amount == other.Amount &&
@@ -33,7 +33,7 @@ namespace financesApi.models
             // If FitId exists, use it for hash
             if (!string.IsNullOrEmpty(FitId))
                 return FitId.GetHashCode();
-            
+
             // Otherwise use combination of date, amount, and payee
             return HashCode.Combine(Date, Amount, Payee);
         }

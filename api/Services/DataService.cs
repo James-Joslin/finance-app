@@ -59,13 +59,13 @@ namespace financesApi.services
                 foreach (var (queryPath, parameters) in operations)
                 {
                     string query = await SqlQueryLoader.GetQueryAsync(queryPath);
-                    
+
                     using var command = new NpgsqlCommand(query, connection, transaction);
                     foreach (var param in parameters)
                     {
                         command.Parameters.AddWithValue(param.Key, param.Value ?? DBNull.Value);
                     }
-                    
+
                     await command.ExecuteNonQueryAsync();
                 }
             });

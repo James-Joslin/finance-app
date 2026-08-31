@@ -28,26 +28,32 @@ vi.mock('../lib/queries', () => ({
         isPending: false,
         error: null,
     }),
-    useOccurrences: () => query([{
-        id: 1,
-        status: 'expected',
-        itemName: 'Mortgage',
-        accountName: 'Current account',
-        kind: 'expense',
-        dueDate: '2026-08-15',
-        expectedAmount: 1200,
-    }]),
-    useRecurring: () => query([{
-        id: 2,
-        name: 'Payday',
-        accountName: 'Current account',
-        kind: 'income',
-        frequency: 'monthly',
-        nextDate: '2026-08-28',
-        amount: 2500,
-        isActive: true,
-        source: 'manual',
-    }]),
+    useOccurrences: () =>
+        query([
+            {
+                id: 1,
+                status: 'expected',
+                itemName: 'Mortgage',
+                accountName: 'Current account',
+                kind: 'expense',
+                dueDate: '2026-08-15',
+                expectedAmount: 1200,
+            },
+        ]),
+    useRecurring: () =>
+        query([
+            {
+                id: 2,
+                name: 'Payday',
+                accountName: 'Current account',
+                kind: 'income',
+                frequency: 'monthly',
+                nextDate: '2026-08-28',
+                amount: 2500,
+                isActive: true,
+                source: 'manual',
+            },
+        ]),
     useSafety: () => query([]),
     useSuggestions: () => query([]),
 }));
@@ -56,8 +62,12 @@ describe('PlanPage collapsible sections', () => {
     it('starts upcoming items and recurring schedules collapsed and toggles each independently', () => {
         render(<PlanPage />);
 
-        const upcoming = screen.getByRole('button', { name: /upcoming bills and paydays/i });
-        const schedules = screen.getByRole('button', { name: /flexible household schedules/i });
+        const upcoming = screen.getByRole('button', {
+            name: /upcoming bills and paydays/i,
+        });
+        const schedules = screen.getByRole('button', {
+            name: /flexible household schedules/i,
+        });
 
         expect(upcoming).toHaveAttribute('aria-expanded', 'false');
         expect(schedules).toHaveAttribute('aria-expanded', 'false');

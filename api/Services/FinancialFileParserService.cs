@@ -25,19 +25,19 @@ namespace financesApi.services
             using var memoryStream = new MemoryStream();
             fileStream.CopyTo(memoryStream);
             memoryStream.Position = 0;
-            
+
             // Detect file type by extension first
             var extension = Path.GetExtension(fileName)?.ToLower();
-            
+
             // If no extension, try to detect by content
             if (string.IsNullOrEmpty(extension) || extension == ".txt")
             {
                 extension = DetectFileTypeByContent(memoryStream);
                 memoryStream.Position = 0; // Reset after detection
             }
-            
+
             Console.WriteLine($"Processing file: {fileName} as type: {extension}");
-            
+
             IReadOnlyList<ParsedFinancialRow> rows;
             string fileType;
             switch (extension)
@@ -46,7 +46,7 @@ namespace financesApi.services
                     rows = OfxParser.ParseRows(memoryStream);
                     fileType = "OFX";
                     break;
-                    
+
                 case ".qif":
                     rows = QifParser.ParseRows(memoryStream);
                     fileType = "QIF";
@@ -59,7 +59,7 @@ namespace financesApi.services
                     rows = HalifaxPdfParser.ParseRows(memoryStream);
                     fileType = "PDF";
                     break;
-                    
+
                 default:
                     throw new NotSupportedException($"File type {extension} is not supported. Please upload an OFX, QIF, or Halifax PDF file.");
             }
@@ -74,34 +74,34 @@ namespace financesApi.services
             stream.Position = 0;
             return bytesRead == signature.Length && Encoding.ASCII.GetString(signature) == "%PDF-";
         }
-        
+
         private static string DetectFileTypeByContent(Stream stream)
         {
             // Read first 500 bytes to detect file type
             var buffer = new byte[500];
             int bytesRead = stream.Read(buffer, 0, 500);
             stream.Position = 0; // Reset stream position
-            
+
             if (bytesRead == 0)
                 throw new InvalidOperationException("File is empty");
 
             if (bytesRead >= 5 && Encoding.ASCII.GetString(buffer, 0, 5) == "%PDF-") return ".pdf";
-            
+
             var header = Encoding.UTF8.GetString(buffer, 0, bytesRead).ToUpper();
-            
+
             // Check for OFX markers
             if (header.Contains("OFXHEADER") || header.Contains("<OFX>") || header.Contains("</OFX>"))
             {
                 return ".ofx";
             }
-            
+
             // Check for QIF markers
-            if (header.Contains("!TYPE:") || header.Contains("!ACCOUNT") || 
+            if (header.Contains("!TYPE:") || header.Contains("!ACCOUNT") ||
                 (header.Contains("^") && (header.Contains("D") || header.Contains("T") || header.Contains("P"))))
             {
                 return ".qif";
             }
-            
+
             throw new NotSupportedException("Could not determine file type from content");
         }
     }

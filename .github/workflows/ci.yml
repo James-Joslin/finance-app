@@ -28,6 +28,10 @@ jobs:
           dotnet-version: 8.0.x
       - name: Restore dependencies
         run: dotnet restore api.Tests/financesApi.Tests.csproj
+      - name: Verify .NET formatting
+        run: |
+          dotnet format api/financesApi.csproj --no-restore --verify-no-changes
+          dotnet format api.Tests/financesApi.Tests.csproj --no-restore --verify-no-changes
       - name: Run Roslyn/.NET analyzers
         run: dotnet build api.Tests/financesApi.Tests.csproj --configuration Release --no-restore --no-incremental --warnaserror -p:RunAnalyzers=true -p:EnableNETAnalyzers=true
       - name: Run tests
@@ -51,6 +55,8 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Verify Prettier formatting
+        run: npm run format:check
       - name: Run ESLint
         run: npm run lint
       - name: Run tests
