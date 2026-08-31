@@ -36,7 +36,6 @@ namespace financesApi.services
                 memoryStream.Position = 0; // Reset after detection
             }
 
-            Console.WriteLine($"Processing file: {fileName} as type: {extension}");
 
             IReadOnlyList<ParsedFinancialRow> rows;
             string fileType;

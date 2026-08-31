@@ -50,7 +50,8 @@ docker compose --env-file .env.dev -f compose.dev.yml up --build
 The services are available at:
 
 - Frontend: http://localhost:5173
-- API health: http://localhost:5153/status/health
+- API liveness: http://localhost:5153/status/live
+- API readiness: http://localhost:5153/status/ready
 - Swagger: http://localhost:5153/swagger
 - PostgreSQL: localhost:55432
 
@@ -93,6 +94,11 @@ docker compose --env-file .env.prod -f compose.prod.yml ps
 docker compose --env-file .env.prod -f compose.prod.yml logs --follow
 ```
 
+API logs are single-line JSON with UTC timestamps. Request-completion and error events include a
+trace ID; unexpected API error responses return the same value as `traceId` for correlation.
+Request headers, bodies, query values, uploaded filenames, financial values, SQL parameters, and
+connection strings are not logged.
+
 Stop production while retaining its database:
 
 ```sh
@@ -133,7 +139,10 @@ Run the complete local CI-equivalent suite through the development containers:
 ./scripts/check-all.sh
 ```
 
-The orchestrator builds and starts the development stack, then runs the backend, frontend, migration, production-image, and Semgrep checks. Backend and frontend commands use `docker exec`; migration checks use a temporary migration container and a disposable database that is removed afterward. CodeQL remains GitHub-only.
+The orchestrator builds and starts the development stack, then runs the backend, frontend, migration,
+backup/restore, production-image, and Semgrep checks. The recovery check migrates a disposable source
+database, uploads its dump to Azurite, restores it under a new name, validates its data and revision,
+proves overwrite refusal, and removes all test data. CodeQL remains GitHub-only.
 
 Each `scripts/check-*.sh` entry point can also be run independently. Set `FINOVA_ENV_FILE` to use an environment file other than `.env.dev` or `.env.dev.example`.
 
@@ -156,16 +165,75 @@ Legacy upload and reporting routes remain available as compatibility adapters.
 
 ## Backups
 
-Create a compressed production dump on the Docker host:
+Production runs a backup scheduler at 02:00 UTC each day and retains 14 days by default. Each
+PostgreSQL custom-format dump is uploaded as an immutable Blob with a SHA-256 checksum under:
 
-```sh
-docker compose --env-file .env.prod -f compose.prod.yml exec -T db \
-  pg_dump -U finances_app -d finances_db -Fc > finances_db.dump
+```text
+<database>/YYYY/MM/DD/<database>_YYYYMMDDTHHMMSSZ.dump
 ```
 
-If `POSTGRES_USER` or `POSTGRES_DB` differs in `.env.prod`, use those values in the command.
+Azurite is private to the Compose network and persists to `azurite_prod_data`, separately from the
+PostgreSQL volume. Generate a base64 account key before the first production start and place it in
+`.env.prod`:
 
-Periodically test restoring backups into a separate disposable PostgreSQL instance. Do not test restoration against the production volume.
+```sh
+openssl rand -base64 64
+```
+
+Create an immediate backup through the same path used by the scheduler:
+
+```sh
+./scripts/backup-now.sh
+```
+
+List available backup blobs:
+
+```sh
+docker compose --env-file .env.prod -f compose.prod.yml run --rm backup list
+```
+
+Set `FINOVA_ENV_FILE` when the production environment file is not `.env.prod`.
+
+### Test a restore
+
+Restore a selected blob into a new, lowercase database name:
+
+```sh
+./scripts/restore-backup.sh \
+  "finances_db/2026/08/31/finances_db_20260831T020000Z.dump" \
+  "finances_restore_20260831"
+```
+
+The restore command verifies Blob checksum metadata, refuses an existing target, creates the new
+database, restores without ownership or privilege statements, and verifies its Alembic revision.
+If restoration fails, it removes only the new partial database.
+
+Inspect the restored database before cutover:
+
+```sh
+docker compose --env-file .env.prod -f compose.prod.yml exec db \
+  psql -U finances_app -d finances_restore_20260831 -c "SELECT version_num FROM alembic_version;"
+```
+
+Use the configured `POSTGRES_USER` if it differs from `finances_app`.
+
+### Cut over or roll back
+
+After validating the restored database:
+
+1. Stop writes with
+   `docker compose --env-file .env.prod -f compose.prod.yml stop frontend api`.
+2. Change `POSTGRES_DB` in `.env.prod` to the restored database name.
+3. Run
+   `docker compose --env-file .env.prod -f compose.prod.yml up --detach migrations api frontend`.
+4. Confirm `curl --fail http://localhost:8080/api/status/ready` returns healthy.
+
+The original database is not changed or deleted. To roll back, stop frontend/API, restore the
+original `POSTGRES_DB` value, and start migrations/API/frontend again.
+
+Azurite is a development-oriented storage emulator running on the same Docker host. These backups
+protect against PostgreSQL-volume corruption and accidental database loss, but not total host loss.
+Snapshot or copy the `azurite_prod_data` volume off-host for host-level disaster recovery.
 
 ## Environment variables
 
@@ -181,8 +249,14 @@ Periodically test restoring backups into a separate disposable PostgreSQL instan
 | `API_PORT` | Development host API port | `5153` |
 | `FRONTEND_PORT` | Development host frontend port | `5173` |
 | `APP_PORT` | Production Nginx host port | `8080` |
+| `AZURITE_ACCOUNT_NAME` | Private Blob account used by the backup service | `finovadev` |
+| `AZURITE_ACCOUNT_KEY` | Base64 account key shared by Azurite and backup tooling | Development emulator key |
+| `BACKUP_BLOB_CONTAINER` | Blob container that holds database dumps | `database-backups` |
+| `BACKUP_CRON` | Five-field UTC backup schedule | `0 2 * * *` |
+| `BACKUP_RETENTION_DAYS` | Age after which matching database blobs are deleted | `14` |
 
 Real `.env.dev` and `.env.prod` files are ignored by Git. Only the example files should be committed.
+
 
 ## Schema
 
@@ -206,7 +280,8 @@ Check service health:
 
 ```sh
 docker compose --env-file .env.dev -f compose.dev.yml ps
-curl --fail http://localhost:5173/api/status/health
+curl --fail http://localhost:5173/api/status/live
+curl --fail http://localhost:5173/api/status/ready
 ```
 
 If a published development port is already in use, change its corresponding value in `.env.dev`.
