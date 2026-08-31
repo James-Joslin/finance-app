@@ -29,7 +29,6 @@ namespace financesApi.services
         {
             string query = await SqlQueryLoader.GetQueryAsync(queryPath)
                 ?? throw new ArgumentNullException(nameof(query), $"Query '{queryPath}' returned null");
-            // Console.WriteLine(query);
             return await PostgreSqlQuerier.ExecuteParameterisedQueryAsync(query, parameters);
         }
 
@@ -164,11 +163,9 @@ namespace financesApi.services
                 insert.Parameters.AddWithValue("source_file_type", sourceType);
                 insert.Parameters.AddWithValue("fingerprint", fingerprint);
                 if (await insert.ExecuteNonQueryAsync() > 0) insertedTransactions.Add(item);
-                else Console.WriteLine($"Duplicate transaction skipped: {item.Date:yyyy-MM-dd} - {item.Amount} - {item.Payee}");
             }
 
             await databaseTransaction.CommitAsync();
-            Console.WriteLine($"Successfully inserted {insertedTransactions.Count} new transactions (skipped {incomingTransactions.Count - insertedTransactions.Count} duplicates)");
             return insertedTransactions;
         }
 
