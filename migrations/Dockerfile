@@ -11,5 +11,9 @@ RUN pip install --no-cache-dir --requirement requirements.txt
 COPY alembic.ini env.py script.py.mako ./
 COPY versions ./versions
 
+RUN useradd --create-home --uid 10001 migrations
+
+USER migrations
+
 ENTRYPOINT ["alembic"]
 CMD ["upgrade", "head"]
