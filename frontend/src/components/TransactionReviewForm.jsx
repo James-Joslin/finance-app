@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import axios from '../api/api';
 import { buildReportTransactions } from '../utils/reportTransactions';
 import { useAccounts } from '../contexts/useAccounts'; // Update this import path based on your solution
+import { money, shortDate } from '../lib/format';
 
 export default function TransactionReviewForm() {
     const { selectedAccountId, accounts } = useAccounts();
@@ -177,24 +178,6 @@ export default function TransactionReviewForm() {
             maxAmount: '',
             searchText: '',
             transactionType: 'all',
-        });
-    };
-
-    const formatCurrency = (amount) => {
-        return new Intl.NumberFormat('en-GB', {
-            style: 'currency',
-            currency: 'GBP',
-            minimumFractionDigits: 2,
-        }).format(amount);
-    };
-
-    const formatDate = (dateString) => {
-        if (!dateString) return '';
-        const date = new Date(dateString);
-        return date.toLocaleDateString('en-US', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
         });
     };
 
@@ -458,7 +441,7 @@ export default function TransactionReviewForm() {
                         Total Credits
                     </p>
                     <p className="text-2xl font-bold text-green-800">
-                        {formatCurrency(summary.totalCredits)}
+                        {money(summary.totalCredits)}
                     </p>
                 </div>
                 <div className="bg-red-50 p-3 rounded-lg">
@@ -466,7 +449,7 @@ export default function TransactionReviewForm() {
                         Total Debits
                     </p>
                     <p className="text-2xl font-bold text-red-800">
-                        {formatCurrency(summary.totalDebits)}
+                        {money(summary.totalDebits)}
                     </p>
                 </div>
                 <div className="bg-purple-50 p-3 rounded-lg">
@@ -476,7 +459,7 @@ export default function TransactionReviewForm() {
                     <p
                         className={`text-2xl font-bold ${summary.balance >= 0 ? 'text-green-800' : 'text-red-800'}`}
                     >
-                        {formatCurrency(summary.balance)}
+                        {money(summary.balance)}
                     </p>
                 </div>
             </div>
@@ -543,7 +526,7 @@ export default function TransactionReviewForm() {
                                     className="hover:bg-gray-50"
                                 >
                                     <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
-                                        {formatDate(
+                                        {shortDate(
                                             transaction.transaction_date
                                         )}
                                     </td>
@@ -569,9 +552,7 @@ export default function TransactionReviewForm() {
                                         }`}
                                     >
                                         {transaction.isDebit ? '-' : '+'}
-                                        {formatCurrency(
-                                            transaction.displayAmount
-                                        )}
+                                        {money(transaction.displayAmount)}
                                     </td>
                                     <td
                                         className={`px-4 py-3 whitespace-nowrap text-sm text-right font-medium ${
@@ -580,9 +561,7 @@ export default function TransactionReviewForm() {
                                                 : 'text-red-600'
                                         }`}
                                     >
-                                        {formatCurrency(
-                                            transaction.runningBalance
-                                        )}
+                                        {money(transaction.runningBalance)}
                                     </td>
                                 </tr>
                             ))}

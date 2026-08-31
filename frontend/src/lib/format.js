@@ -44,12 +44,13 @@ const currencyCode = (value) =>
 
 export const shortDate = (value) => {
     if (!value) return 'Not set';
+    const dateOnly = String(value).slice(0, 10);
     return new Intl.DateTimeFormat(preferences.locale, {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
         timeZone: 'UTC',
-    }).format(new Date(value + 'T00:00:00Z'));
+    }).format(new Date(dateOnly + 'T00:00:00Z'));
 };
 
 export const relativeDate = (value) => {

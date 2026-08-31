@@ -35,6 +35,18 @@ describe('currency formatters', () => {
         expect(shortDate('2026-08-30')).toContain('Aug.');
     });
 
+    it('preserves the calendar date in legacy ISO timestamps', () => {
+        setFormatPreferences({
+            currencyCode: 'EUR',
+            locale: 'de-DE',
+            timezone: 'Pacific/Auckland',
+        });
+
+        expect(shortDate('2026-08-30T00:00:00.0000000')).toBe(
+            shortDate('2026-08-30')
+        );
+    });
+
     it('calculates today in the saved household timezone', () => {
         setFormatPreferences({
             currencyCode: 'USD',
