@@ -1,7 +1,6 @@
 using Microsoft.AspNetCore.Mvc;
 using System.Diagnostics;
 using System.Reflection;
-using financesApi.utilities;
 
 namespace financesApi.controllers
 {
@@ -14,24 +13,6 @@ namespace financesApi.controllers
         public statusController(IWebHostEnvironment environment)
         {
             this.environment = environment;
-        }
-
-        [HttpGet("health")]
-        public async Task<IActionResult> health()
-        {
-            try
-            {
-                await using var connection = PostgreSqlQuerier.BuildConnection();
-                await connection.OpenAsync();
-                await using var command = new Npgsql.NpgsqlCommand("SELECT 1", connection);
-                await command.ExecuteScalarAsync();
-                return Ok(new { status = "healthy", timestamp = DateTime.UtcNow, uptime = GetUptime(), version = GetVersion(), database = "healthy" });
-            }
-            catch
-            {
-                return StatusCode(StatusCodes.Status503ServiceUnavailable,
-                    new { status = "unhealthy", timestamp = DateTime.UtcNow, database = "unavailable" });
-            }
         }
 
         [HttpGet("ping")]

@@ -21,7 +21,6 @@ namespace financesApi.controllers
             {
                 { "@accountId", requestParameters.accountId.Value },
             };
-            // Console.WriteLine(parameters);
             DataTable accountTable = await GenericDataService.ExecuteParameterisedQueryAsync(queryPath: "get_account_table", parameters);
             return Ok(DataEditor.ConvertData(accountTable));
         }
