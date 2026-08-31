@@ -646,9 +646,23 @@ public static class FinovaDataService
 
     public static async Task ReconcileRecurringTransactionsAsync(int accountId, DateOnly start, DateOnly end)
     {
-        await EnsureRecurringOccurrencesAsync();
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await ReconcileRecurringTransactionsAsync(connection, transaction, accountId, start, end);
+        await transaction.CommitAsync();
+    }
+
+    public static async Task ReconcileRecurringTransactionsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, int accountId, DateOnly start, DateOnly end)
+    {
+        var ids = new List<int>();
+        await using (var recurring = new NpgsqlCommand(
+            "SELECT id FROM recurring_items WHERE is_active", connection, transaction))
+        await using (var reader = await recurring.ExecuteReaderAsync())
+            while (await reader.ReadAsync()) ids.Add(reader.GetInt32(0));
+        foreach (var id in ids) await PopulateRecurringOccurrencesAsync(connection, transaction, id, false);
+
         const string sql = """
             WITH candidates AS (
                 SELECT ro.id occurrence_id, t.id transaction_id, abs(t.amount) actual_amount,
@@ -669,7 +683,7 @@ public static class FinovaDataService
                 actual_amount=c.actual_amount, matched_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
             FROM candidates c WHERE ro.id=c.occurrence_id AND c.tx_rank=1 AND c.occurrence_rank=1
             """;
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("account", accountId);
         command.Parameters.AddWithValue("start", start.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("end", end.ToDateTime(TimeOnly.MinValue));

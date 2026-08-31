@@ -124,25 +124,43 @@ public sealed class TransactionsController : ControllerBase
         }
     }
 
+    [HttpPost("import/preview")]
+    [RequestSizeLimit(10 * 1024 * 1024)]
+    public async Task<ActionResult<ImportBatchSummary>> PreviewImport([FromForm] OfxUploadRequest request) =>
+        Ok(await TransactionImportService.PreviewAsync(request.OfxContent, request.AccountId));
+
     [HttpPost("import")]
     [RequestSizeLimit(10 * 1024 * 1024)]
     public async Task<IActionResult> Import([FromForm] OfxUploadRequest request)
     {
-        try
+        var batch = await TransactionImportService.ImportImmediatelyAsync(request.OfxContent, request.AccountId);
+        return Ok(new
         {
-            if (request.OfxContent.Length == 0) return BadRequest(new { error = "The uploaded file is empty." });
-            using var stream = request.OfxContent.OpenReadStream();
-            var parsed = FinancialFileParserService.Parse(stream, request.OfxContent.FileName);
-            if (parsed.Count == 0) return BadRequest(new { error = "No valid transactions found in the file." });
-            var inserted = await GenericDataService.FilterAndInsertTransactionsAsync(parsed, request.AccountId);
-            await FinovaDataService.ReconcileRecurringTransactionsAsync(request.AccountId, parsed.Min(x => DateOnly.FromDateTime(x.Date)), parsed.Max(x => DateOnly.FromDateTime(x.Date)));
-            return Ok(new { success = true, imported = inserted.Count, skipped = parsed.Count - inserted.Count });
-        }
-        catch (Exception exception) when (exception is InvalidDataException or NotSupportedException or ArgumentException)
-        {
-            return BadRequest(new { error = exception.Message });
-        }
+            success = true,
+            batchId = batch.Id,
+            imported = batch.Imported,
+            skipped = batch.Skipped,
+            rejected = batch.Rejected,
+        });
     }
+
+    [HttpPost("imports/{id:long}/commit")]
+    public async Task<ActionResult<ImportBatchSummary>> CommitImport(long id) =>
+        Ok(await TransactionImportService.CommitAsync(id));
+
+    [HttpGet("imports")]
+    public async Task<ActionResult<PagedImportBatches>> GetImports(
+        [FromQuery] int? accountId, [FromQuery] int page = 1, [FromQuery] int pageSize = 20) =>
+        Ok(await TransactionImportService.GetHistoryAsync(accountId, page, pageSize));
+
+    [HttpGet("imports/{id:long}/rows")]
+    public async Task<ActionResult<PagedImportRows>> GetImportRows(
+        long id, [FromQuery] string? outcome = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 50) =>
+        Ok(await TransactionImportService.GetRowsAsync(id, outcome, page, pageSize));
+
+    [HttpPost("imports/{id:long}/undo")]
+    public async Task<ActionResult<ImportUndoResult>> UndoImport(long id) =>
+        Ok(await TransactionImportService.UndoAsync(id));
 
     [HttpGet("export")]
     public async Task<IActionResult> Export(
