@@ -13,3 +13,4 @@ compose up --detach --build db migrations api frontend
 "$SCRIPT_DIR/check-migrations.sh"
 "$SCRIPT_DIR/check-images.sh"
 "$SCRIPT_DIR/check-semgrep.sh"
+"$SCRIPT_DIR/check-backup-restore.sh"

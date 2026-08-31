@@ -22,3 +22,9 @@ docker build \
     --file "$REPO_ROOT/migrations/Dockerfile" \
     --tag finova-migrations-check \
     "$REPO_ROOT/migrations"
+
+docker build \
+    --platform linux/amd64 \
+    --file "$REPO_ROOT/operations/Dockerfile" \
+    --tag finova-operations-check \
+    "$REPO_ROOT/operations"
