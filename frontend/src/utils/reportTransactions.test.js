@@ -14,9 +14,18 @@ test('sorts newest first and keeps chronological balances on the correct rows', 
 
     const transactions = buildReportTransactions(headers, rows);
 
-    expect(transactions.map((transaction) => transaction.id)).toEqual(['104', '103', '102', '101']);
-    expect(transactions.map((transaction) => transaction.runningBalance)).toEqual([75, 85, 80, 100]);
-    expect(transactions.map((transaction) => transaction.amount)).toEqual([-10, 5, -20, 100]);
+    expect(transactions.map((transaction) => transaction.id)).toEqual([
+        '104',
+        '103',
+        '102',
+        '101',
+    ]);
+    expect(
+        transactions.map((transaction) => transaction.runningBalance)
+    ).toEqual([75, 85, 80, 100]);
+    expect(transactions.map((transaction) => transaction.amount)).toEqual([
+        -10, 5, -20, 100,
+    ]);
 });
 
 test('rejects locale-dependent or invalid dates instead of silently mis-sorting', () => {

@@ -54,6 +54,8 @@ services:
       - "${API_PORT:-5153}:8080"
     volumes:
       - ./api:/src
+      - ./api:/repo/api
+      - ./api.Tests:/repo/api.Tests
       - api_nuget_cache:/root/.nuget/packages
     depends_on:
       migrations:

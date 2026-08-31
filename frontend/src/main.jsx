@@ -11,14 +11,18 @@ import App from './App.jsx';
 import { ThemeProvider } from './contexts/ThemeContext.jsx';
 
 const queryClient = new QueryClient({
-    defaultOptions: { queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false } },
+    defaultOptions: {
+        queries: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: false },
+    },
 });
 
 createRoot(document.getElementById('root')).render(
     <StrictMode>
         <BrowserRouter>
             <QueryClientProvider client={queryClient}>
-                <ThemeProvider><App /></ThemeProvider>
+                <ThemeProvider>
+                    <App />
+                </ThemeProvider>
             </QueryClientProvider>
         </BrowserRouter>
     </StrictMode>

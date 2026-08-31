@@ -8,20 +8,20 @@ namespace financesApi.models
         public required string _firstName;
         public required string _lastName;
         public required string _accountName;
-        public string FirstName 
-        { 
+        public string FirstName
+        {
             get => _firstName;
             set => _firstName = value.ToTitleCase();
         }
-        
-        public string LastName 
-        { 
+
+        public string LastName
+        {
             get => _lastName;
             set => _lastName = value.ToTitleCase();
         }
-        
-        public string AccountName 
-        { 
+
+        public string AccountName
+        {
             get => _accountName;
             set => _accountName = value.ToTitleCase();
         }

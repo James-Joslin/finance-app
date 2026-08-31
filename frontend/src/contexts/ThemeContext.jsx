@@ -4,8 +4,12 @@ const ThemeContext = createContext(null);
 const STORAGE_KEY = 'finova-theme';
 
 export function ThemeProvider({ children }) {
-    const [preference, setPreference] = useState(() => localStorage.getItem(STORAGE_KEY) || 'system');
-    const [systemDark, setSystemDark] = useState(() => window.matchMedia('(prefers-color-scheme: dark)').matches);
+    const [preference, setPreference] = useState(
+        () => localStorage.getItem(STORAGE_KEY) || 'system'
+    );
+    const [systemDark, setSystemDark] = useState(
+        () => window.matchMedia('(prefers-color-scheme: dark)').matches
+    );
 
     useEffect(() => {
         const media = window.matchMedia('(prefers-color-scheme: dark)');
@@ -14,7 +18,8 @@ export function ThemeProvider({ children }) {
         return () => media.removeEventListener('change', onChange);
     }, []);
 
-    const resolved = preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
+    const resolved =
+        preference === 'system' ? (systemDark ? 'dark' : 'light') : preference;
 
     useEffect(() => {
         document.documentElement.dataset.theme = resolved;
@@ -22,8 +27,13 @@ export function ThemeProvider({ children }) {
         localStorage.setItem(STORAGE_KEY, preference);
     }, [preference, resolved]);
 
-    const value = useMemo(() => ({ preference, setPreference, resolved }), [preference, resolved]);
-    return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+    const value = useMemo(
+        () => ({ preference, setPreference, resolved }),
+        [preference, resolved]
+    );
+    return (
+        <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>
+    );
 }
 
 export function useTheme() {

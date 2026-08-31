@@ -127,6 +127,16 @@ Test downgrades only against a disposable database. A downgrade can destroy appl
 
 ## Tests
 
+Run the complete local CI-equivalent suite through the development containers:
+
+```sh
+./scripts/check-all.sh
+```
+
+The orchestrator builds and starts the development stack, then runs the backend, frontend, migration, production-image, and Semgrep checks. Backend and frontend commands use `docker exec`; migration checks use a temporary migration container and a disposable database that is removed afterward. CodeQL remains GitHub-only.
+
+Each `scripts/check-*.sh` entry point can also be run independently. Set `FINOVA_ENV_FILE` to use an environment file other than `.env.dev` or `.env.dev.example`.
+
 Run backend finance-calculation tests in the same .NET toolchain used by the API:
 
 ```sh

@@ -34,16 +34,26 @@ describe('EnrollmentPage', () => {
     it('suggests a household name and submits trimmed profile details', async () => {
         render(<EnrollmentPage />);
 
-        fireEvent.change(screen.getByLabelText('First name'), { target: { value: '  Alex  ' } });
-        fireEvent.change(screen.getByLabelText('Last name'), { target: { value: 'Taylor' } });
+        fireEvent.change(screen.getByLabelText('First name'), {
+            target: { value: '  Alex  ' },
+        });
+        fireEvent.change(screen.getByLabelText('Last name'), {
+            target: { value: 'Taylor' },
+        });
 
-        expect(screen.getByLabelText(/Household name/)).toHaveValue('Taylor Household');
-        fireEvent.click(screen.getByRole('button', { name: /continue to finova/i }));
+        expect(screen.getByLabelText(/Household name/)).toHaveValue(
+            'Taylor Household'
+        );
+        fireEvent.click(
+            screen.getByRole('button', { name: /continue to finova/i })
+        );
 
-        await waitFor(() => expect(mocks.mutateAsync).toHaveBeenCalledWith({
-            firstName: 'Alex',
-            lastName: 'Taylor',
-            householdName: 'Taylor Household',
-        }));
+        await waitFor(() =>
+            expect(mocks.mutateAsync).toHaveBeenCalledWith({
+                firstName: 'Alex',
+                lastName: 'Taylor',
+                householdName: 'Taylor Household',
+            })
+        );
     });
 });
