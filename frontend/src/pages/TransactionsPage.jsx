@@ -221,7 +221,13 @@ function ImportModal({ open, onClose, accounts }) {
         <Modal open={open} onClose={close} wide title="Import transactions" copy="Preview every row before importing, review previous batches, or undo the latest import for an account.">
             <div className="import-tabs" role="tablist">
                 <button type="button" className={tab === 'new' ? 'active' : ''} onClick={() => setTab('new')}><FileUp /> New import</button>
-                <button type="button" className={tab === 'history' ? 'active' : ''} onClick={showHistory}><History /> History</button>
+                <button
+                    type="button"
+                    className={tab === 'history' ? 'active' : ''}
+                    onClick={showHistory}
+                    disabled={preview.isPending || batch?.status === 'preview'}
+                    title={preview.isPending || batch?.status === 'preview' ? 'Import or cancel the current preview before viewing history.' : undefined}
+                ><History /> History</button>
             </div>
 
             {tab === 'new' ? (

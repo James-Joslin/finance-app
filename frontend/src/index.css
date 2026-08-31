@@ -724,6 +724,7 @@ kbd { font: inherit; font-size: .62rem; color: var(--text-muted); background: va
 .import-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; padding: .25rem; margin-bottom: .85rem; border-radius: 10px; background: var(--surface-muted); }
 .import-tabs button { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: .4rem; border: 0; border-radius: 8px; color: var(--text-muted); background: transparent; font-size: .64rem; font-weight: 700; cursor: pointer; }
 .import-tabs button.active { color: var(--brand); background: var(--surface); box-shadow: var(--shadow-sm); }
+.import-tabs button:disabled { color: var(--text-muted); opacity: .45; cursor: not-allowed; }
 .import-summary { border: 1px solid var(--border); border-radius: 11px; overflow: hidden; }
 .import-summary > div:first-child { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: .7rem; padding: .7rem .85rem; }
 .import-summary > div:first-child > span:first-child { min-width: 0; display: flex; flex-direction: column; }
