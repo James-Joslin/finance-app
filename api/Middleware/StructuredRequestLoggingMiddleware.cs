@@ -24,13 +24,20 @@ public sealed class StructuredRequestLoggingMiddleware(
         {
             stopwatch.Stop();
             var level = GetLevel(context.Request.Path, context.Response.StatusCode);
+            var sanitizedMethod = SanitizeForLog(context.Request.Method);
             logger.Log(level, RequestCompleted,
                 "HTTP {RequestMethod} {RequestPath} responded {StatusCode} in {ElapsedMilliseconds} ms",
-                context.Request.Method,
+                sanitizedMethod,
                 context.Request.Path.Value ?? string.Empty,
                 context.Response.StatusCode,
                 stopwatch.Elapsed.TotalMilliseconds);
         }
+    }
+
+    private static string SanitizeForLog(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return string.Empty;
+        return value.Replace("\r", string.Empty).Replace("\n", string.Empty);
     }
 
     private static LogLevel GetLevel(PathString path, int statusCode)
