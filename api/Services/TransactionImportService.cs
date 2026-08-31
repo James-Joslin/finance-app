@@ -32,12 +32,20 @@ public static class TransactionImportService
         await using var transaction = await connection.BeginTransactionAsync();
 
         string accountName;
+        decimal startingBalance;
         await using (var account = new NpgsqlCommand(
-            "SELECT name FROM accounts WHERE id=@id AND NOT is_archived", connection, transaction))
+            """
+            SELECT a.name, coalesce(sum(t.amount), 0)
+            FROM accounts a LEFT JOIN transactions t ON t.account_id=a.id
+            WHERE a.id=@id AND NOT a.is_archived
+            GROUP BY a.id
+            """, connection, transaction))
         {
             account.Parameters.AddWithValue("id", accountId);
-            accountName = (string?)await account.ExecuteScalarAsync()
-                ?? throw new ArgumentException("An active import account is required.");
+            await using var reader = await account.ExecuteReaderAsync();
+            if (!await reader.ReadAsync()) throw new ArgumentException("An active import account is required.");
+            accountName = reader.GetString(0);
+            startingBalance = reader.GetDecimal(1);
         }
 
         var classified = ClassifyRows(parsed.Rows);
@@ -64,6 +72,8 @@ public static class TransactionImportService
                 };
         }
 
+        ApplyProjectedBalances(classified, startingBalance);
+
         var total = classified.Count;
         var importable = classified.Count(row => row.Outcome == "ready");
         var skipped = classified.Count(row => row.Outcome == "skipped");
@@ -71,11 +81,11 @@ public static class TransactionImportService
         long batchId;
         const string batchSql = """
             INSERT INTO transaction_import_batches (
-                account_id, file_name, file_type, file_size, file_sha256, status,
+                account_id, file_name, file_type, file_size, file_sha256, starting_balance, status,
                 total_rows, importable_rows, imported_rows, skipped_rows, rejected_rows,
                 created_at, expires_at
             ) VALUES (
-                @account, @name, @type, @size, @hash, 'preview',
+                @account, @name, @type, @size, @hash, @starting_balance, 'preview',
                 @total, @importable, 0, @skipped, @rejected, @created, @expires
             ) RETURNING id
             """;
@@ -86,6 +96,7 @@ public static class TransactionImportService
             batch.Parameters.AddWithValue("type", parsed.FileType);
             batch.Parameters.AddWithValue("size", file.Length);
             batch.Parameters.AddWithValue("hash", fileHash);
+            batch.Parameters.AddWithValue("starting_balance", startingBalance);
             batch.Parameters.AddWithValue("total", total);
             batch.Parameters.AddWithValue("importable", importable);
             batch.Parameters.AddWithValue("skipped", skipped);
@@ -100,7 +111,7 @@ public static class TransactionImportService
 
         await transaction.CommitAsync();
         return new(batchId, accountId, accountName, fileName, parsed.FileType, file.Length, fileHash,
-            "preview", createdAt, expiresAt, null, null, total, importable, 0, skipped, rejected, false);
+            startingBalance, "preview", createdAt, expiresAt, null, null, total, importable, 0, skipped, rejected, false);
     }
 
     public static async Task<ImportBatchSummary> CommitAsync(long batchId)
@@ -157,6 +168,7 @@ public static class TransactionImportService
             await FinovaDataService.ReconcileRecurringTransactionsAsync(
                 connection, transaction, accountId, importedDates.Min(), importedDates.Max());
 
+        await RecalculateBalancesAsync(connection, transaction, batchId);
         var counts = await CountRowsAsync(connection, transaction, batchId);
         await using (var update = new NpgsqlCommand(
             """
@@ -234,7 +246,7 @@ public static class TransactionImportService
 
         var sql = """
             SELECT id, ordinal, source_label, transaction_date, display_date, amount, display_amount,
-                payee, memo, outcome, reason_code, reason_message
+                balance_after, payee, memo, outcome, reason_code, reason_message
             FROM transaction_import_rows WHERE batch_id=@batch
             """ + filter + " ORDER BY ordinal LIMIT @limit OFFSET @offset";
         await using var command = new NpgsqlCommand(sql, connection);
@@ -252,11 +264,12 @@ public static class TransactionImportService
                 reader.IsDBNull(4) ? null : reader.GetString(4),
                 reader.IsDBNull(5) ? null : reader.GetDecimal(5),
                 reader.IsDBNull(6) ? null : reader.GetString(6),
-                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(7) ? null : reader.GetDecimal(7),
                 reader.IsDBNull(8) ? null : reader.GetString(8),
-                reader.GetString(9),
-                reader.IsDBNull(10) ? null : reader.GetString(10),
-                reader.IsDBNull(11) ? null : reader.GetString(11)));
+                reader.IsDBNull(9) ? null : reader.GetString(9),
+                reader.GetString(10),
+                reader.IsDBNull(11) ? null : reader.GetString(11),
+                reader.IsDBNull(12) ? null : reader.GetString(12)));
         }
         return new(items, page, pageSize, total, Math.Max(1, (int)Math.Ceiling(total / (double)pageSize)));
     }
@@ -414,11 +427,11 @@ public static class TransactionImportService
             INSERT INTO transaction_import_rows (
                 batch_id, ordinal, source_label, transaction_date, display_date, amount, display_amount,
                 payee, memo, fitid, transaction_type, category, check_number, source_file_type,
-                statement_balance, fingerprint, outcome, reason_code, reason_message
+                statement_balance, fingerprint, balance_after, outcome, reason_code, reason_message
             ) VALUES (
                 @batch, @ordinal, @label, @date, @display_date, @amount, @display_amount,
                 @payee, @memo, @fitid, @transaction_type, @category, @check_number, @source_type,
-                @balance, @fingerprint, @outcome, @reason_code, @reason_message
+                @balance, @fingerprint, @balance_after, @outcome, @reason_code, @reason_message
             )
             """;
         await using var command = new NpgsqlCommand(sql, connection, transaction);
@@ -438,6 +451,7 @@ public static class TransactionImportService
         command.Parameters.AddWithValue("source_type", fileType);
         AddNullable(command, "balance", balance);
         AddNullable(command, "fingerprint", row.Fingerprint);
+        AddNullable(command, "balance_after", row.BalanceAfter);
         command.Parameters.AddWithValue("outcome", row.Outcome);
         AddNullable(command, "reason_code", row.ReasonCode);
         AddNullable(command, "reason_message", row.ReasonMessage);
@@ -538,6 +552,62 @@ public static class TransactionImportService
         await command.ExecuteNonQueryAsync();
     }
 
+    private static async Task RecalculateBalancesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, long batchId)
+    {
+        await using var command = new NpgsqlCommand(
+            """
+            WITH direction AS (
+                SELECT (
+                    SELECT first_row.transaction_date
+                    FROM transaction_import_rows first_row
+                    WHERE first_row.batch_id=@batch AND first_row.transaction_date IS NOT NULL
+                    ORDER BY first_row.ordinal LIMIT 1
+                ) > (
+                    SELECT last_row.transaction_date
+                    FROM transaction_import_rows last_row
+                    WHERE last_row.batch_id=@batch AND last_row.transaction_date IS NOT NULL
+                    ORDER BY last_row.ordinal DESC LIMIT 1
+                ) AS source_descending
+            )
+            UPDATE transaction_import_rows row SET balance_after = CASE
+                WHEN row.transaction_date IS NULL OR row.amount IS NULL THEN NULL
+                ELSE batch.starting_balance + coalesce((
+                    SELECT sum(previous.amount)
+                    FROM transaction_import_rows previous, direction
+                    WHERE previous.batch_id=row.batch_id
+                        AND previous.outcome='imported'
+                        AND (
+                            previous.transaction_date < row.transaction_date
+                            OR (previous.transaction_date = row.transaction_date AND (
+                                (coalesce(direction.source_descending, false) AND previous.ordinal >= row.ordinal)
+                                OR (NOT coalesce(direction.source_descending, false) AND previous.ordinal <= row.ordinal)
+                            ))
+                        )
+                ), 0)
+            END
+            FROM transaction_import_batches batch
+            WHERE row.batch_id=@batch AND batch.id=row.batch_id
+            """, connection, transaction);
+        command.Parameters.AddWithValue("batch", batchId);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static void ApplyProjectedBalances(List<ClassifiedRow> rows, decimal startingBalance)
+    {
+        var datedRows = rows
+            .Select((row, index) => (Row: row, Index: index))
+            .Where(item => item.Row.Transaction is not null)
+            .ToList();
+        var balances = FinanceMath.CalculateImportBalances(startingBalance, datedRows.Select(item =>
+            new ImportBalanceEntry(item.Row.Source.Ordinal, item.Row.Transaction!.Date,
+                item.Row.Transaction.Amount, item.Row.Outcome == "ready")));
+        foreach (var item in datedRows)
+        {
+            rows[item.Index] = item.Row with { BalanceAfter = balances[item.Row.Source.Ordinal] };
+        }
+    }
+
     private static async Task<(int Imported, int Skipped, int Rejected)> CountRowsAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, long batchId)
     {
@@ -570,16 +640,16 @@ public static class TransactionImportService
 
     private static ImportBatchSummary ReadBatch(NpgsqlDataReader reader) => new(
         reader.GetInt64(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3),
-        reader.GetString(4), reader.GetInt64(5), reader.GetString(6), reader.GetString(7),
-        AsOffset(reader.GetDateTime(8)), AsOffset(reader.GetDateTime(9)),
-        reader.IsDBNull(10) ? null : AsOffset(reader.GetDateTime(10)),
+        reader.GetString(4), reader.GetInt64(5), reader.GetString(6), reader.GetDecimal(7), reader.GetString(8),
+        AsOffset(reader.GetDateTime(9)), AsOffset(reader.GetDateTime(10)),
         reader.IsDBNull(11) ? null : AsOffset(reader.GetDateTime(11)),
-        reader.GetInt32(12), reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15),
-        reader.GetInt32(16), reader.GetBoolean(17));
+        reader.IsDBNull(12) ? null : AsOffset(reader.GetDateTime(12)),
+        reader.GetInt32(13), reader.GetInt32(14), reader.GetInt32(15), reader.GetInt32(16),
+        reader.GetInt32(17), reader.GetBoolean(18));
 
     private const string BatchSelectSql = """
         SELECT b.id, b.account_id, a.name, b.file_name, b.file_type, b.file_size, b.file_sha256,
-            b.status, b.created_at, b.expires_at, b.completed_at, b.undone_at,
+            b.starting_balance, b.status, b.created_at, b.expires_at, b.completed_at, b.undone_at,
             b.total_rows, b.importable_rows, b.imported_rows, b.skipped_rows, b.rejected_rows,
             b.status='completed' AND b.imported_rows > 0 AND NOT EXISTS (
                 SELECT 1 FROM transaction_import_batches newer
@@ -596,7 +666,8 @@ public static class TransactionImportService
         string? Fingerprint,
         string Outcome,
         string? ReasonCode,
-        string? ReasonMessage);
+        string? ReasonMessage,
+        decimal? BalanceAfter = null);
 
     private sealed record StagedRow(
         long Id,

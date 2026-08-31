@@ -34,6 +34,7 @@ describe('transaction imports', () => {
                     displayDate: '31/08/2099',
                     amount: null,
                     displayAmount: 'not-money',
+                    balanceAfter: 248.77,
                     payee: 'Broken row',
                     memo: null,
                     outcome: 'rejected',
@@ -47,5 +48,7 @@ describe('transaction imports', () => {
         expect(screen.getByText(/QIF transaction 2 has an invalid amount/)).toBeInTheDocument();
         expect(screen.getByText('QIF transaction 2 · 31/08/2099')).toBeInTheDocument();
         expect(screen.getByText('rejected')).toBeInTheDocument();
+        expect(screen.getByText('Balance after')).toBeInTheDocument();
+        expect(screen.getByText(/248\.77/)).toBeInTheDocument();
     });
 });

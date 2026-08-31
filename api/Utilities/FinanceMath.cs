@@ -6,6 +6,7 @@ public sealed record HouseholdPositionResult(decimal Assets, decimal Debt, decim
 public sealed record GoalAllocationResult(decimal Allocated, decimal RemainingPool);
 public sealed record BudgetResult(decimal RolloverIn, decimal Available, decimal Remaining, decimal ProgressPercent);
 public sealed record GoalPaceResult(int? DaysRemaining, decimal? Weekly, decimal? Monthly);
+public sealed record ImportBalanceEntry(int Ordinal, DateTime Date, decimal Amount, bool Included);
 
 public static class FinanceMath
 {
@@ -61,5 +62,26 @@ public static class FinanceMath
         if (remaining <= 0) return new(days, 0, 0);
         var divisor = Math.Max(1, days);
         return new(days, Math.Round(remaining / divisor * 7, 2), Math.Round(remaining / divisor * 30.4375m, 2));
+    }
+
+    public static IReadOnlyDictionary<int, decimal> CalculateImportBalances(
+        decimal startingBalance, IEnumerable<ImportBalanceEntry> entries)
+    {
+        var sourceRows = entries.ToList();
+        if (sourceRows.Count == 0) return new Dictionary<int, decimal>();
+
+        var sourceDescending = sourceRows[0].Date > sourceRows[^1].Date;
+        var chronologicalRows = sourceDescending
+            ? sourceRows.OrderBy(row => row.Date).ThenByDescending(row => row.Ordinal)
+            : sourceRows.OrderBy(row => row.Date).ThenBy(row => row.Ordinal);
+
+        var balances = new Dictionary<int, decimal>(sourceRows.Count);
+        var balance = startingBalance;
+        foreach (var row in chronologicalRows)
+        {
+            if (row.Included) balance += row.Amount;
+            balances[row.Ordinal] = balance;
+        }
+        return balances;
     }
 }

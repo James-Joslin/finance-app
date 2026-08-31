@@ -315,7 +315,10 @@ export function ImportRows({ query, page, onPage }) {
                         <span className="import-row-position"><small>Row</small><strong>{row.ordinal}</strong></span>
                         <span className="import-row-description"><small>{row.sourceLabel}{row.date ? ` · ${shortDate(row.date)}` : row.displayDate ? ` · ${row.displayDate}` : ''}</small><strong>{row.payee || row.memo || 'Unreadable transaction'}</strong>{row.reasonMessage && <em>{row.reasonMessage}</em>}</span>
                         <Pill tone={row.outcome === 'imported' || row.outcome === 'ready' ? 'success' : row.outcome === 'rejected' ? 'warning' : 'neutral'}>{row.outcome}</Pill>
-                        <strong className={Number(row.amount) >= 0 ? 'positive' : ''}>{row.amount != null ? money(row.amount) : row.displayAmount || '—'}</strong>
+                        <span className="import-row-values">
+                            <span><small>Amount</small><strong className={Number(row.amount) >= 0 ? 'positive' : ''}>{row.amount != null ? money(row.amount) : row.displayAmount || '—'}</strong></span>
+                            <span><small>Balance after</small><strong>{row.balanceAfter != null ? money(row.balanceAfter) : '—'}</strong></span>
+                        </span>
                     </article>
                 ))}
             </div>
