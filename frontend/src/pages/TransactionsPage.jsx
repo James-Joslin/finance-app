@@ -13,7 +13,14 @@ import {
     WalletCards,
 } from 'lucide-react';
 import RecurringEditor from '../components/RecurringEditor';
-import { Card, Field, Modal, PageState, Pill } from '../components/ui';
+import {
+    Card,
+    Field,
+    InlineError,
+    Modal,
+    PageState,
+    Pill,
+} from '../components/ui';
 import { apiError, money, relativeDate, shortDate } from '../lib/format';
 import {
     mutations,
@@ -58,6 +65,7 @@ export default function TransactionsPage() {
         [page, filters, search]
     );
     const transactions = useTransactions(params);
+    const pageQueries = [transactions, accounts, categories];
     const hasFilters =
         search ||
         Object.values(filters).some((value) => value && value !== 'all');
@@ -194,8 +202,21 @@ export default function TransactionsPage() {
                 )}
 
                 <PageState
-                    loading={transactions.isLoading}
-                    error={transactions.error && apiError(transactions.error)}
+                    loading={pageQueries.some((query) => query.isLoading)}
+                    error={
+                        pageQueries.find((query) => query.error)?.error &&
+                        apiError(pageQueries.find((query) => query.error).error)
+                    }
+                    onRetry={() =>
+                        Promise.all(
+                            pageQueries
+                                .filter((query) => query.error)
+                                .map((query) => query.refetch())
+                        )
+                    }
+                    retrying={pageQueries.some(
+                        (query) => query.error && query.isFetching
+                    )}
                     empty={transactions.data?.items?.length === 0}
                     emptyTitle="No matching transactions"
                     emptyCopy="Try a different filter or import a bank statement."
@@ -238,7 +259,8 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
             ['insights'],
             queryKeys.budgets,
             queryKeys.rules,
-        ]
+        ],
+        { successMessage: 'Transaction category updated.' }
     );
     const changeCategory = (item, categoryId) => {
         const saveRule = window.confirm(
@@ -295,6 +317,7 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
                                 <td>
                                     <select
                                         className="table-select"
+                                        disabled={updateCategory.isPending}
                                         title="Choose whether this applies once or to future matching imports."
                                         aria-label={
                                             'Category for ' +
@@ -435,6 +458,9 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
                     </article>
                 ))}
             </div>
+            <InlineError>
+                {updateCategory.error && apiError(updateCategory.error)}
+            </InlineError>
         </>
     );
 }
@@ -507,12 +533,17 @@ function ImportModal({ open, onClose, accounts }) {
     const [expandedId, setExpandedId] = useState(null);
     const [historyRowPage, setHistoryRowPage] = useState(1);
 
-    const preview = useFinovaMutation(mutations.previewImport);
+    const preview = useFinovaMutation(mutations.previewImport, [], {
+        successMessage: 'Import preview is ready.',
+    });
     const commit = useFinovaMutation(
         mutations.commitImport,
-        importInvalidations
+        importInvalidations,
+        { successMessage: 'Transactions imported.' }
     );
-    const undo = useFinovaMutation(mutations.undoImport, importInvalidations);
+    const undo = useFinovaMutation(mutations.undoImport, importInvalidations, {
+        successMessage: 'Import undone.',
+    });
     const batch = commit.data || preview.data;
     const rows = useImportRows(
         batch?.id,
@@ -555,7 +586,11 @@ function ImportModal({ open, onClose, accounts }) {
         const form = new FormData();
         form.append('AccountId', accountId);
         form.append('OfxContent', file);
-        await preview.mutateAsync(form);
+        try {
+            await preview.mutateAsync(form);
+        } catch {
+            // The preview error remains visible in the form.
+        }
     };
     const showHistory = () => {
         setTab('history');
@@ -570,8 +605,12 @@ function ImportModal({ open, onClose, accounts }) {
             )
         )
             return;
-        await undo.mutateAsync(item.id);
-        setExpandedId(null);
+        try {
+            await undo.mutateAsync(item.id);
+            setExpandedId(null);
+        } catch {
+            // The undo error remains visible in the history panel.
+        }
     };
 
     return (
@@ -646,11 +685,9 @@ function ImportModal({ open, onClose, accounts }) {
                                     }
                                 />
                             </label>
-                            {preview.error && (
-                                <p className="form-error">
-                                    {apiError(preview.error)}
-                                </p>
-                            )}
+                            <InlineError>
+                                {preview.error && apiError(preview.error)}
+                            </InlineError>
                             <div className="modal-actions">
                                 <button
                                     type="button"
@@ -706,11 +743,9 @@ function ImportModal({ open, onClose, accounts }) {
                                 page={rowPage}
                                 onPage={setRowPage}
                             />
-                            {(commit.error || rows.error) && (
-                                <p className="form-error">
-                                    {apiError(commit.error || rows.error)}
-                                </p>
-                            )}
+                            <InlineError>
+                                {commit.error && apiError(commit.error)}
+                            </InlineError>
                             <div className="modal-actions">
                                 {batch.status === 'completed' ? (
                                     <>
@@ -843,7 +878,15 @@ export function ImportRows({ query, page, onPage }) {
                 <RefreshCw className="spin" /> Loading row results…
             </div>
         );
-    if (query.error) return null;
+    if (query.error)
+        return (
+            <InlineError
+                onRetry={() => query.refetch()}
+                retrying={query.isFetching}
+            >
+                {apiError(query.error)}
+            </InlineError>
+        );
     if (!query.data?.items?.length)
         return (
             <div className="import-rows-state">No rows match this outcome.</div>
@@ -966,7 +1009,12 @@ function ImportHistory({
                     <RefreshCw className="spin" /> Loading import history…
                 </div>
             ) : query.error ? (
-                <p className="form-error">{apiError(query.error)}</p>
+                <InlineError
+                    onRetry={() => query.refetch()}
+                    retrying={query.isFetching}
+                >
+                    {apiError(query.error)}
+                </InlineError>
             ) : query.data?.items?.length === 0 ? (
                 <div className="import-rows-state">
                     No completed imports for this account.
@@ -1042,7 +1090,7 @@ function ImportHistory({
                     />
                 </div>
             )}
-            {undo.error && <p className="form-error">{apiError(undo.error)}</p>}
+            <InlineError>{undo.error && apiError(undo.error)}</InlineError>
             <div className="modal-actions">
                 <button
                     type="button"

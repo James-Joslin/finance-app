@@ -18,6 +18,7 @@ import {
 import {
     Card,
     Field,
+    InlineError,
     Modal,
     PageState,
     Pill,
@@ -52,10 +53,12 @@ export default function GoalsPage() {
         tree: staticAssetUrl(`decor/decor_tree${night}.png`),
         wave: staticAssetUrl(`decor/decor_wave_02${night}.png`),
     };
-    const reorder = useFinovaMutation(mutations.reorderGoals, [
-        queryKeys.goals,
-        queryKeys.dashboard,
-    ]);
+    const reorder = useFinovaMutation(
+        mutations.reorderGoals,
+        [queryKeys.goals, queryKeys.dashboard],
+        { successMessage: 'Goal priority updated.' }
+    );
+    const pageQueries = [goals, accounts];
     const move = (goalId, direction) => {
         const ids = active.map((goal) => goal.id);
         const index = ids.indexOf(goalId);
@@ -72,6 +75,16 @@ export default function GoalsPage() {
                 (goals.error || accounts.error) &&
                 apiError(goals.error || accounts.error)
             }
+            onRetry={() =>
+                Promise.all(
+                    pageQueries
+                        .filter((query) => query.error)
+                        .map((query) => query.refetch())
+                )
+            }
+            retrying={pageQueries.some(
+                (query) => query.error && query.isFetching
+            )}
         >
             <div className="page-stack">
                 <div className="goals-summary-bar">
@@ -96,6 +109,9 @@ export default function GoalsPage() {
                         <Plus /> Add goal
                     </button>
                 </div>
+                <InlineError>
+                    {reorder.error && apiError(reorder.error)}
+                </InlineError>
 
                 {featured ? (
                     <FeaturedGoal
@@ -162,6 +178,7 @@ export default function GoalsPage() {
                                         onDown={() => move(goal.id, 1)}
                                         first={position === 0}
                                         last={position === active.length - 1}
+                                        pending={reorder.isPending}
                                     />
                                 );
                             })}
@@ -265,7 +282,7 @@ function FeaturedGoal({ goal, artwork, onEdit }) {
     );
 }
 
-function GoalCard({ goal, onEdit, onUp, onDown, first, last }) {
+function GoalCard({ goal, onEdit, onUp, onDown, first, last, pending }) {
     return (
         <Card className="goal-card">
             <GoalVisual
@@ -306,7 +323,7 @@ function GoalCard({ goal, onEdit, onUp, onDown, first, last }) {
             <div className="goal-actions">
                 <button
                     className="icon-button"
-                    disabled={first}
+                    disabled={first || pending}
                     onClick={onUp}
                     aria-label="Move goal up"
                 >
@@ -314,7 +331,7 @@ function GoalCard({ goal, onEdit, onUp, onDown, first, last }) {
                 </button>
                 <button
                     className="icon-button"
-                    disabled={last}
+                    disabled={last || pending}
                     onClick={onDown}
                     aria-label="Move goal down"
                 >
@@ -357,28 +374,33 @@ function GoalEditor({ open, goal, accounts, nextPriority, onClose }) {
 
     const save = useFinovaMutation(
         goal ? mutations.updateGoal : mutations.createGoal,
-        [queryKeys.goals, queryKeys.dashboard]
+        [queryKeys.goals, queryKeys.dashboard],
+        { successMessage: goal ? 'Goal updated.' : 'Goal created.' }
     );
     const upload = useFinovaMutation(mutations.uploadGoalImage);
 
     const submit = async (event) => {
         event.preventDefault();
-        let imageId = form.imageId;
-        if (image) {
-            const body = new FormData();
-            body.append('image', image);
-            imageId = (await upload.mutateAsync(body)).id;
+        try {
+            let imageId = form.imageId;
+            if (image) {
+                const body = new FormData();
+                body.append('image', image);
+                imageId = (await upload.mutateAsync(body)).id;
+            }
+            const body = {
+                ...form,
+                targetAmount: Number(form.targetAmount),
+                targetDate: form.targetDate || null,
+                accountId: Number(form.accountId),
+                priorityOrder: Number(form.priorityOrder),
+                imageId,
+            };
+            await save.mutateAsync(goal ? { id: goal.id, body } : body);
+            onClose();
+        } catch {
+            // The upload or save error remains visible in the open form.
         }
-        const body = {
-            ...form,
-            targetAmount: Number(form.targetAmount),
-            targetDate: form.targetDate || null,
-            accountId: Number(form.accountId),
-            priorityOrder: Number(form.priorityOrder),
-            imageId,
-        };
-        await save.mutateAsync(goal ? { id: goal.id, body } : body);
-        onClose();
     };
 
     return (
@@ -536,11 +558,10 @@ function GoalEditor({ open, goal, accounts, nextPriority, onClose }) {
                         />
                     </label>
                 </div>
-                {(save.error || upload.error) && (
-                    <p className="form-error span-2">
-                        {apiError(save.error || upload.error)}
-                    </p>
-                )}
+                <InlineError className="span-2">
+                    {(save.error || upload.error) &&
+                        apiError(save.error || upload.error)}
+                </InlineError>
                 <div className="modal-actions goal-editor-actions">
                     <button
                         type="button"

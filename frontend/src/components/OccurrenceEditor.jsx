@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Field, Modal } from './ui';
+import { Field, InlineError, Modal } from './ui';
 import { apiError, money } from '../lib/format';
 import { mutations, queryKeys, useFinovaMutation } from '../lib/queries';
 
@@ -10,13 +10,17 @@ export default function OccurrenceEditor({ occurrence, onClose }) {
         status: 'expected',
         note: '',
     });
-    const save = useFinovaMutation(mutations.updateOccurrence, [
-        queryKeys.occurrences,
-        queryKeys.recurring,
-        queryKeys.safety,
-        queryKeys.dashboard,
-        queryKeys.budgets,
-    ]);
+    const save = useFinovaMutation(
+        mutations.updateOccurrence,
+        [
+            queryKeys.occurrences,
+            queryKeys.recurring,
+            queryKeys.safety,
+            queryKeys.dashboard,
+            queryKeys.budgets,
+        ],
+        { successMessage: 'Occurrence updated.' }
+    );
     useEffect(() => {
         if (!occurrence) return;
         setForm({
@@ -29,16 +33,20 @@ export default function OccurrenceEditor({ occurrence, onClose }) {
     }, [occurrence]);
     const submit = async (event) => {
         event.preventDefault();
-        await save.mutateAsync({
-            id: occurrence.id,
-            body: {
-                dueDate: form.dueDate,
-                expectedAmount: Number(form.expectedAmount),
-                status: form.status,
-                note: form.note.trim() || null,
-            },
-        });
-        onClose();
+        try {
+            await save.mutateAsync({
+                id: occurrence.id,
+                body: {
+                    dueDate: form.dueDate,
+                    expectedAmount: Number(form.expectedAmount),
+                    status: form.status,
+                    note: form.note.trim() || null,
+                },
+            });
+            onClose();
+        } catch {
+            // The mutation error remains visible in the open form.
+        }
     };
     return (
         <Modal
@@ -101,9 +109,9 @@ export default function OccurrenceEditor({ occurrence, onClose }) {
                         placeholder="Optional household note"
                     />
                 </Field>
-                {save.error && (
-                    <p className="form-error span-2">{apiError(save.error)}</p>
-                )}
+                <InlineError className="span-2">
+                    {save.error && apiError(save.error)}
+                </InlineError>
                 <div className="modal-actions span-2">
                     <button
                         type="button"

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { Field, Modal } from './ui';
+import { Field, InlineError, Modal } from './ui';
 import { apiError } from '../lib/format';
 import { mutations, queryKeys, useFinovaMutation } from '../lib/queries';
 
@@ -36,13 +36,22 @@ export default function RecurringEditor({
         ['transactions'],
         queryKeys.budgets,
     ];
-    const create = useFinovaMutation(mutations.createRecurring, invalidate);
-    const update = useFinovaMutation(mutations.updateRecurring, invalidate);
+    const create = useFinovaMutation(mutations.createRecurring, invalidate, {
+        successMessage: transaction
+            ? 'Transaction added to the recurring plan.'
+            : 'Recurring item created.',
+    });
+    const update = useFinovaMutation(mutations.updateRecurring, invalidate, {
+        successMessage: 'Recurring item updated.',
+    });
     const mark = useFinovaMutation(
         mutations.markTransactionRecurring,
-        invalidate
+        invalidate,
+        { successMessage: 'Transaction added to the recurring plan.' }
     );
-    const remove = useFinovaMutation(mutations.deleteRecurring, invalidate);
+    const remove = useFinovaMutation(mutations.deleteRecurring, invalidate, {
+        successMessage: 'Recurring item deleted.',
+    });
     const pending =
         create.isPending ||
         update.isPending ||
@@ -109,26 +118,30 @@ export default function RecurringEditor({
     });
     const submit = async (event) => {
         event.preventDefault();
-        if (transaction) {
-            const value = body();
-            await mark.mutateAsync({
-                id: transaction.id,
-                body: {
-                    name: value.name,
-                    categoryId: value.categoryId,
-                    amount: value.amount,
-                    frequency: value.frequency,
-                    nextDate: value.nextDate,
-                    amountTolerance: value.amountTolerance,
-                    dateWindowDays: value.dateWindowDays,
-                },
-            });
-        } else if (item) {
-            await update.mutateAsync({ id: item.id, body: body() });
-        } else {
-            await create.mutateAsync(body());
+        try {
+            if (transaction) {
+                const value = body();
+                await mark.mutateAsync({
+                    id: transaction.id,
+                    body: {
+                        name: value.name,
+                        categoryId: value.categoryId,
+                        amount: value.amount,
+                        frequency: value.frequency,
+                        nextDate: value.nextDate,
+                        amountTolerance: value.amountTolerance,
+                        dateWindowDays: value.dateWindowDays,
+                    },
+                });
+            } else if (item) {
+                await update.mutateAsync({ id: item.id, body: body() });
+            } else {
+                await create.mutateAsync(body());
+            }
+            onClose();
+        } catch {
+            // The active mutation error remains visible in the open form.
         }
-        onClose();
     };
     const deleteItem = async () => {
         if (
@@ -138,8 +151,12 @@ export default function RecurringEditor({
             )
         )
             return;
-        await remove.mutateAsync(item.id);
-        onClose();
+        try {
+            await remove.mutateAsync(item.id);
+            onClose();
+        } catch {
+            // The delete error remains visible in the open form.
+        }
     };
 
     const title = transaction
@@ -312,9 +329,9 @@ export default function RecurringEditor({
                         </span>
                     </label>
                 )}
-                {error && (
-                    <p className="form-error span-2">{apiError(error)}</p>
-                )}
+                <InlineError className="span-2">
+                    {error && apiError(error)}
+                </InlineError>
                 <div className="modal-actions span-2 recurring-editor-actions">
                     {item && (
                         <button

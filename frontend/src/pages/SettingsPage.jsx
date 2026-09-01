@@ -13,7 +13,14 @@ import {
     Users,
 } from 'lucide-react';
 import { useTheme } from '../contexts/ThemeContext';
-import { Card, Field, Modal, PageState, Pill } from '../components/ui';
+import {
+    Card,
+    Field,
+    InlineError,
+    Modal,
+    PageState,
+    Pill,
+} from '../components/ui';
 import { apiError, money, percent, todayIso } from '../lib/format';
 import {
     mutations,
@@ -34,18 +41,22 @@ export default function SettingsPage() {
     const [profile, setProfile] = useState(null);
     const [household, setHousehold] = useState(null);
     const [accountEditor, setAccountEditor] = useState(false);
-    const saveProfile = useFinovaMutation(mutations.saveEnrollment, [
-        queryKeys.enrollment,
-        queryKeys.settings,
-        queryKeys.dashboard,
-    ]);
-    const saveSettings = useFinovaMutation(mutations.saveSettings, [
-        queryKeys.settings,
-        queryKeys.dashboard,
-    ]);
-    const deleteRule = useFinovaMutation(mutations.deleteTransactionRule, [
-        queryKeys.rules,
-    ]);
+    const saveProfile = useFinovaMutation(
+        mutations.saveEnrollment,
+        [queryKeys.enrollment, queryKeys.settings, queryKeys.dashboard],
+        { successMessage: 'Profile saved.' }
+    );
+    const saveSettings = useFinovaMutation(
+        mutations.saveSettings,
+        [queryKeys.settings, queryKeys.dashboard],
+        { successMessage: 'Household settings saved.' }
+    );
+    const deleteRule = useFinovaMutation(
+        mutations.deleteTransactionRule,
+        [queryKeys.rules],
+        { successMessage: 'Automatic category rule removed.' }
+    );
+    const pageQueries = [enrollment, settings, accounts, rules];
 
     useEffect(() => {
         if (enrollment.data?.profile) setProfile(enrollment.data.profile);
@@ -56,15 +67,23 @@ export default function SettingsPage() {
 
     const submitProfile = async (event) => {
         event.preventDefault();
-        await saveProfile.mutateAsync({
-            ...profile,
-            householdName: household.householdName,
-        });
+        try {
+            await saveProfile.mutateAsync({
+                ...profile,
+                householdName: household.householdName,
+            });
+        } catch {
+            // The mutation error remains visible in the form.
+        }
     };
 
     const saveHousehold = async (event) => {
         event.preventDefault();
-        await saveSettings.mutateAsync(household);
+        try {
+            await saveSettings.mutateAsync(household);
+        } catch {
+            // The mutation error remains visible in the form.
+        }
     };
 
     return (
@@ -87,6 +106,16 @@ export default function SettingsPage() {
                         rules.error
                 )
             }
+            onRetry={() =>
+                Promise.all(
+                    pageQueries
+                        .filter((query) => query.error)
+                        .map((query) => query.refetch())
+                )
+            }
+            retrying={pageQueries.some(
+                (query) => query.error && query.isFetching
+            )}
         >
             <div className="settings-layout">
                 <div className="settings-main page-stack">
@@ -135,11 +164,10 @@ export default function SettingsPage() {
                                         }
                                     />
                                 </Field>
-                                {saveProfile.error && (
-                                    <p className="form-error span-2">
-                                        {apiError(saveProfile.error)}
-                                    </p>
-                                )}
+                                <InlineError className="span-2">
+                                    {saveProfile.error &&
+                                        apiError(saveProfile.error)}
+                                </InlineError>
                                 <div className="modal-actions span-2">
                                     <button
                                         className="button"
@@ -230,6 +258,10 @@ export default function SettingsPage() {
                                         }
                                     />
                                 </Field>
+                                <InlineError className="span-2">
+                                    {saveSettings.error &&
+                                        apiError(saveSettings.error)}
+                                </InlineError>
                                 <div className="modal-actions span-2">
                                     <button
                                         className="button"
@@ -377,11 +409,9 @@ export default function SettingsPage() {
                                 ))}
                             </div>
                         )}
-                        {deleteRule.error && (
-                            <p className="form-error">
-                                {apiError(deleteRule.error)}
-                            </p>
-                        )}
+                        <InlineError>
+                            {deleteRule.error && apiError(deleteRule.error)}
+                        </InlineError>
                     </Card>
                 </div>
 
@@ -516,7 +546,10 @@ function AccountEditor({ open, account, onClose }) {
             queryKeys.dashboard,
             queryKeys.safety,
             queryKeys.goals,
-        ]
+        ],
+        {
+            successMessage: account ? 'Account updated.' : 'Account created.',
+        }
     );
     const submit = async (event) => {
         event.preventDefault();
@@ -537,8 +570,12 @@ function AccountEditor({ open, account, onClose }) {
                     ? false
                     : form.includeInSafeToSpend,
         };
-        await save.mutateAsync(account ? { id: account.id, body } : body);
-        onClose();
+        try {
+            await save.mutateAsync(account ? { id: account.id, body } : body);
+            onClose();
+        } catch {
+            // The mutation error remains visible in the open form.
+        }
     };
     return (
         <Modal
@@ -792,9 +829,9 @@ function AccountEditor({ open, account, onClose }) {
                         </span>
                     </label>
                 )}
-                {save.error && (
-                    <p className="form-error span-2">{apiError(save.error)}</p>
-                )}
+                <InlineError className="span-2">
+                    {save.error && apiError(save.error)}
+                </InlineError>
                 <div className="modal-actions span-2">
                     <button
                         type="button"

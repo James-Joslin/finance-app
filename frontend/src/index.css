@@ -2524,9 +2524,46 @@ kbd {
     color: var(--danger);
     background: var(--danger-soft);
 }
+.form-error:has(> button) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+}
 .form-success {
     color: var(--mint);
     background: var(--mint-soft);
+}
+.toast-region {
+    position: fixed;
+    z-index: 200;
+    top: 1rem;
+    right: 1rem;
+    display: flex;
+    width: min(380px, calc(100vw - 2rem));
+    flex-direction: column;
+    gap: 0.55rem;
+    pointer-events: none;
+}
+.toast {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    box-shadow: var(--shadow-md);
+    font-size: 0.68rem;
+    pointer-events: auto;
+}
+.toast-success > svg {
+    color: var(--mint);
+}
+.toast .icon-button {
+    width: 1.8rem;
+    height: 1.8rem;
 }
 .file-drop {
     min-height: 130px;

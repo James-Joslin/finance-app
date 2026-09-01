@@ -17,6 +17,7 @@ import OccurrenceEditor from '../components/OccurrenceEditor';
 import {
     Card,
     Field,
+    InlineError,
     Modal,
     PageState,
     Pill,
@@ -56,13 +57,17 @@ export default function PlanPage() {
     const [upcomingOpen, setUpcomingOpen] = useState(false);
     const [schedulesOpen, setSchedulesOpen] = useState(false);
 
-    const loading =
-        safety.isLoading ||
-        recurring.isLoading ||
-        occurrences.isLoading ||
-        budgets.isLoading;
-    const error =
-        safety.error || recurring.error || occurrences.error || budgets.error;
+    const pageQueries = [
+        safety,
+        recurring,
+        occurrences,
+        budgets,
+        suggestions,
+        accounts,
+        categories,
+    ];
+    const loading = pageQueries.some((query) => query.isLoading);
+    const error = pageQueries.find((query) => query.error)?.error;
     const upcomingItems = (occurrences.data || [])
         .filter((item) => item.status === 'expected')
         .slice(0, 12);
@@ -72,7 +77,20 @@ export default function PlanPage() {
     ).length;
 
     return (
-        <PageState loading={loading} error={error && apiError(error)}>
+        <PageState
+            loading={loading}
+            error={error && apiError(error)}
+            onRetry={() =>
+                Promise.all(
+                    pageQueries
+                        .filter((query) => query.error)
+                        .map((query) => query.refetch())
+                )
+            }
+            retrying={pageQueries.some(
+                (query) => query.error && query.isFetching
+            )}
+        >
             <div className="page-stack">
                 <section className="section-heading">
                     <div>
@@ -488,12 +506,16 @@ function RecurringTimeline({ items, onEdit }) {
 }
 
 function Suggestions({ items }) {
-    const create = useFinovaMutation(mutations.createRecurring, [
-        queryKeys.recurring,
-        queryKeys.suggestions,
-        queryKeys.safety,
-        queryKeys.dashboard,
-    ]);
+    const create = useFinovaMutation(
+        mutations.createRecurring,
+        [
+            queryKeys.recurring,
+            queryKeys.suggestions,
+            queryKeys.safety,
+            queryKeys.dashboard,
+        ],
+        { successMessage: 'Suggestion added to the recurring plan.' }
+    );
     return (
         <Card className="suggestions-card">
             <div className="card-heading">
@@ -525,6 +547,7 @@ function Suggestions({ items }) {
                         <strong>{money(item.amount)}</strong>
                         <button
                             className="button small secondary"
+                            disabled={create.isPending}
                             onClick={() =>
                                 create.mutate({
                                     name: item.name,
@@ -539,11 +562,13 @@ function Suggestions({ items }) {
                                 })
                             }
                         >
-                            <Check /> Confirm
+                            <Check />{' '}
+                            {create.isPending ? 'Confirming…' : 'Confirm'}
                         </button>
                     </article>
                 ))}
             </div>
+            <InlineError>{create.error && apiError(create.error)}</InlineError>
         </Card>
     );
 }
@@ -606,10 +631,11 @@ function BudgetModal({ open, budget, onClose, categories }) {
     const [categoryId, setCategoryId] = useState(budget?.categoryId || '');
     const [amount, setAmount] = useState(budget?.monthlyAmount || '');
     const [rollover, setRollover] = useState(budget?.rolloverEnabled || false);
-    const save = useFinovaMutation(mutations.saveBudget, [
-        queryKeys.budgets,
-        queryKeys.dashboard,
-    ]);
+    const save = useFinovaMutation(
+        mutations.saveBudget,
+        [queryKeys.budgets, queryKeys.dashboard],
+        { successMessage: 'Monthly budget saved.' }
+    );
     useEffect(() => {
         setCategoryId(budget?.categoryId || '');
         setAmount(budget?.monthlyAmount || '');
@@ -617,12 +643,16 @@ function BudgetModal({ open, budget, onClose, categories }) {
     }, [budget, open]);
     const submit = async (event) => {
         event.preventDefault();
-        await save.mutateAsync({
-            categoryId: Number(categoryId),
-            monthlyAmount: Number(amount),
-            rolloverEnabled: rollover,
-        });
-        onClose();
+        try {
+            await save.mutateAsync({
+                categoryId: Number(categoryId),
+                monthlyAmount: Number(amount),
+                rolloverEnabled: rollover,
+            });
+            onClose();
+        } catch {
+            // The mutation error remains visible in the open form.
+        }
     };
     return (
         <Modal
@@ -669,6 +699,7 @@ function BudgetModal({ open, budget, onClose, categories }) {
                         <small>Overspending will not reduce next month.</small>
                     </span>
                 </label>
+                <InlineError>{save.error && apiError(save.error)}</InlineError>
                 <div className="modal-actions">
                     <button
                         type="button"
@@ -677,7 +708,9 @@ function BudgetModal({ open, budget, onClose, categories }) {
                     >
                         Cancel
                     </button>
-                    <button className="button">Save budget</button>
+                    <button className="button" disabled={save.isPending}>
+                        {save.isPending ? 'Saving…' : 'Save budget'}
+                    </button>
                 </div>
             </form>
         </Modal>

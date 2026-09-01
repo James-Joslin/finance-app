@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../api/api';
+import { useFeedback } from '../components/ui';
 
 export const queryKeys = {
     enrollment: ['enrollment'],
@@ -110,16 +111,27 @@ export const useImportRows = (batchId, params, enabled = true) =>
         enabled: enabled && Boolean(batchId),
     });
 
-export const useFinovaMutation = (mutationFn, invalidate = []) => {
+export const useFinovaMutation = (
+    mutationFn,
+    invalidate = [],
+    { successMessage } = {}
+) => {
     const client = useQueryClient();
+    const { notifySuccess } = useFeedback();
     return useMutation({
         mutationFn,
-        onSuccess: async () => {
+        retry: false,
+        onSuccess: async (data, variables) => {
             await Promise.all(
                 invalidate.map((key) =>
                     client.invalidateQueries({ queryKey: key })
                 )
             );
+            const message =
+                typeof successMessage === 'function'
+                    ? successMessage(data, variables)
+                    : successMessage;
+            if (message) notifySuccess(message);
         },
     });
 };
