@@ -9,7 +9,7 @@ import {
     WalletCards,
 } from 'lucide-react';
 import FinovaLogo from '../components/FinovaLogo';
-import { Field } from '../components/ui';
+import { Field, InlineError } from '../components/ui';
 import { useTheme } from '../contexts/ThemeContext';
 import { apiError } from '../lib/format';
 import { mutations, queryKeys, useFinovaMutation } from '../lib/queries';
@@ -21,11 +21,11 @@ export default function EnrollmentPage() {
         lastName: '',
         householdName: '',
     });
-    const save = useFinovaMutation(mutations.saveEnrollment, [
-        queryKeys.enrollment,
-        queryKeys.settings,
-        queryKeys.dashboard,
-    ]);
+    const save = useFinovaMutation(
+        mutations.saveEnrollment,
+        [queryKeys.enrollment, queryKeys.settings, queryKeys.dashboard],
+        { successMessage: 'Your Finova workspace is ready.' }
+    );
 
     const setLastName = (lastName) => {
         const previousSuggestion = form.lastName.trim()
@@ -165,11 +165,9 @@ export default function EnrollmentPage() {
                                 }
                             />
                         </Field>
-                        {save.error && (
-                            <p className="form-error span-2">
-                                {apiError(save.error)}
-                            </p>
-                        )}
+                        <InlineError className="span-2">
+                            {save.error && apiError(save.error)}
+                        </InlineError>
                         <button
                             className="button enrollment-submit span-2"
                             disabled={save.isPending}

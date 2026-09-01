@@ -8,6 +8,7 @@ import '@fontsource/manrope/600.css';
 import '@fontsource/manrope/700.css';
 import './index.css';
 import App from './App.jsx';
+import { FeedbackProvider } from './components/ui.jsx';
 import { ThemeProvider } from './contexts/ThemeContext.jsx';
 
 const queryClient = new QueryClient({
@@ -21,7 +22,9 @@ createRoot(document.getElementById('root')).render(
         <BrowserRouter>
             <QueryClientProvider client={queryClient}>
                 <ThemeProvider>
-                    <App />
+                    <FeedbackProvider>
+                        <App />
+                    </FeedbackProvider>
                 </ThemeProvider>
             </QueryClientProvider>
         </BrowserRouter>

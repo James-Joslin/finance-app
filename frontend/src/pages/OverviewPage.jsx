@@ -31,11 +31,22 @@ export default function OverviewPage() {
     const { resolved } = useTheme();
     const trendRange = overviewTrendRange(dashboard.data?.recentTransactions);
     const insights = useInsights(trendRange);
+    const pageQueries = [dashboard, insights];
 
     return (
         <PageState
-            loading={dashboard.isLoading}
-            error={dashboard.error?.message}
+            loading={pageQueries.some((query) => query.isLoading)}
+            error={pageQueries.find((query) => query.error)?.error?.message}
+            onRetry={() =>
+                Promise.all(
+                    pageQueries
+                        .filter((query) => query.error)
+                        .map((query) => query.refetch())
+                )
+            }
+            retrying={pageQueries.some(
+                (query) => query.error && query.isFetching
+            )}
         >
             <div className="overview-grid">
                 <SafeToSpendCard data={dashboard.data} theme={resolved} />

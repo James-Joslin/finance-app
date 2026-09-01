@@ -49,11 +49,9 @@ export default function RecurringEditor({
         invalidate,
         { successMessage: 'Transaction added to the recurring plan.' }
     );
-    const remove = useFinovaMutation(
-        mutations.deleteRecurring,
-        invalidate,
-        { successMessage: 'Recurring item deleted.' }
-    );
+    const remove = useFinovaMutation(mutations.deleteRecurring, invalidate, {
+        successMessage: 'Recurring item deleted.',
+    });
     const pending =
         create.isPending ||
         update.isPending ||

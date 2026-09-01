@@ -154,6 +154,8 @@ export default function InsightsPage() {
             <PageState
                 loading={insights.isLoading}
                 error={insights.error && apiError(insights.error)}
+                onRetry={() => insights.refetch()}
+                retrying={insights.isFetching}
             >
                 <div className="insights-grid">
                     <Card className="insight-trend">
