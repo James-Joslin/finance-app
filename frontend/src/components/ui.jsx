@@ -271,11 +271,26 @@ export function Modal({
     );
 }
 
-export function InlineError({ children, className = '' }) {
+export function InlineError({
+    children,
+    className = '',
+    onRetry,
+    retrying = false,
+}) {
     if (!children) return null;
     return (
         <p className={'form-error ' + className} role="alert">
-            {children}
+            <span>{children}</span>
+            {onRetry && (
+                <button
+                    className="button small secondary"
+                    type="button"
+                    onClick={onRetry}
+                    disabled={retrying}
+                >
+                    {retrying ? 'Trying again…' : 'Try again'}
+                </button>
+            )}
         </p>
     );
 }

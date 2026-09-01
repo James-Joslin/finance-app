@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { Field, Modal } from './ui';
+import { Field, InlineError, Modal } from './ui';
 import { apiError } from '../lib/format';
 import { mutations, queryKeys, useFinovaMutation } from '../lib/queries';
 
@@ -36,13 +36,24 @@ export default function RecurringEditor({
         ['transactions'],
         queryKeys.budgets,
     ];
-    const create = useFinovaMutation(mutations.createRecurring, invalidate);
-    const update = useFinovaMutation(mutations.updateRecurring, invalidate);
+    const create = useFinovaMutation(mutations.createRecurring, invalidate, {
+        successMessage: transaction
+            ? 'Transaction added to the recurring plan.'
+            : 'Recurring item created.',
+    });
+    const update = useFinovaMutation(mutations.updateRecurring, invalidate, {
+        successMessage: 'Recurring item updated.',
+    });
     const mark = useFinovaMutation(
         mutations.markTransactionRecurring,
-        invalidate
+        invalidate,
+        { successMessage: 'Transaction added to the recurring plan.' }
     );
-    const remove = useFinovaMutation(mutations.deleteRecurring, invalidate);
+    const remove = useFinovaMutation(
+        mutations.deleteRecurring,
+        invalidate,
+        { successMessage: 'Recurring item deleted.' }
+    );
     const pending =
         create.isPending ||
         update.isPending ||
@@ -312,9 +323,9 @@ export default function RecurringEditor({
                         </span>
                     </label>
                 )}
-                {error && (
-                    <p className="form-error span-2">{apiError(error)}</p>
-                )}
+                <InlineError className="span-2">
+                    {error && apiError(error)}
+                </InlineError>
                 <div className="modal-actions span-2 recurring-editor-actions">
                     {item && (
                         <button
