@@ -643,12 +643,16 @@ function BudgetModal({ open, budget, onClose, categories }) {
     }, [budget, open]);
     const submit = async (event) => {
         event.preventDefault();
-        await save.mutateAsync({
-            categoryId: Number(categoryId),
-            monthlyAmount: Number(amount),
-            rolloverEnabled: rollover,
-        });
-        onClose();
+        try {
+            await save.mutateAsync({
+                categoryId: Number(categoryId),
+                monthlyAmount: Number(amount),
+                rolloverEnabled: rollover,
+            });
+            onClose();
+        } catch {
+            // The mutation error remains visible in the open form.
+        }
     };
     return (
         <Modal

@@ -586,7 +586,11 @@ function ImportModal({ open, onClose, accounts }) {
         const form = new FormData();
         form.append('AccountId', accountId);
         form.append('OfxContent', file);
-        await preview.mutateAsync(form);
+        try {
+            await preview.mutateAsync(form);
+        } catch {
+            // The preview error remains visible in the form.
+        }
     };
     const showHistory = () => {
         setTab('history');
@@ -601,8 +605,12 @@ function ImportModal({ open, onClose, accounts }) {
             )
         )
             return;
-        await undo.mutateAsync(item.id);
-        setExpandedId(null);
+        try {
+            await undo.mutateAsync(item.id);
+            setExpandedId(null);
+        } catch {
+            // The undo error remains visible in the history panel.
+        }
     };
 
     return (

@@ -33,16 +33,20 @@ export default function OccurrenceEditor({ occurrence, onClose }) {
     }, [occurrence]);
     const submit = async (event) => {
         event.preventDefault();
-        await save.mutateAsync({
-            id: occurrence.id,
-            body: {
-                dueDate: form.dueDate,
-                expectedAmount: Number(form.expectedAmount),
-                status: form.status,
-                note: form.note.trim() || null,
-            },
-        });
-        onClose();
+        try {
+            await save.mutateAsync({
+                id: occurrence.id,
+                body: {
+                    dueDate: form.dueDate,
+                    expectedAmount: Number(form.expectedAmount),
+                    status: form.status,
+                    note: form.note.trim() || null,
+                },
+            });
+            onClose();
+        } catch {
+            // The mutation error remains visible in the open form.
+        }
     };
     return (
         <Modal

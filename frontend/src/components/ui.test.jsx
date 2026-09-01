@@ -1,5 +1,11 @@
 import { createRef, useState } from 'react';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import {
+    act,
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+} from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     FeedbackProvider,
@@ -8,6 +14,8 @@ import {
     PageState,
     useFeedback,
 } from './ui';
+
+afterEach(cleanup);
 
 function ModalHarness({ initialFocusRef }) {
     const [open, setOpen] = useState(false);
@@ -47,6 +55,7 @@ describe('Modal', () => {
     it('moves focus inside, traps Tab in both directions, and restores focus', () => {
         render(<ModalHarness />);
         const opener = screen.getByRole('button', { name: 'Open editor' });
+        opener.focus();
         fireEvent.click(opener);
 
         const close = screen.getByRole('button', { name: 'Close dialog' });

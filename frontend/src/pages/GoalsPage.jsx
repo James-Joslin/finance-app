@@ -381,22 +381,26 @@ function GoalEditor({ open, goal, accounts, nextPriority, onClose }) {
 
     const submit = async (event) => {
         event.preventDefault();
-        let imageId = form.imageId;
-        if (image) {
-            const body = new FormData();
-            body.append('image', image);
-            imageId = (await upload.mutateAsync(body)).id;
+        try {
+            let imageId = form.imageId;
+            if (image) {
+                const body = new FormData();
+                body.append('image', image);
+                imageId = (await upload.mutateAsync(body)).id;
+            }
+            const body = {
+                ...form,
+                targetAmount: Number(form.targetAmount),
+                targetDate: form.targetDate || null,
+                accountId: Number(form.accountId),
+                priorityOrder: Number(form.priorityOrder),
+                imageId,
+            };
+            await save.mutateAsync(goal ? { id: goal.id, body } : body);
+            onClose();
+        } catch {
+            // The upload or save error remains visible in the open form.
         }
-        const body = {
-            ...form,
-            targetAmount: Number(form.targetAmount),
-            targetDate: form.targetDate || null,
-            accountId: Number(form.accountId),
-            priorityOrder: Number(form.priorityOrder),
-            imageId,
-        };
-        await save.mutateAsync(goal ? { id: goal.id, body } : body);
-        onClose();
     };
 
     return (

@@ -43,11 +43,15 @@ export default function EnrollmentPage() {
 
     const submit = async (event) => {
         event.preventDefault();
-        await save.mutateAsync({
-            firstName: form.firstName.trim(),
-            lastName: form.lastName.trim(),
-            householdName: form.householdName.trim(),
-        });
+        try {
+            await save.mutateAsync({
+                firstName: form.firstName.trim(),
+                lastName: form.lastName.trim(),
+                householdName: form.householdName.trim(),
+            });
+        } catch {
+            // The mutation error remains visible in the form.
+        }
     };
 
     return (

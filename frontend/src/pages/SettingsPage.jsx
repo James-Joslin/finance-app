@@ -67,15 +67,23 @@ export default function SettingsPage() {
 
     const submitProfile = async (event) => {
         event.preventDefault();
-        await saveProfile.mutateAsync({
-            ...profile,
-            householdName: household.householdName,
-        });
+        try {
+            await saveProfile.mutateAsync({
+                ...profile,
+                householdName: household.householdName,
+            });
+        } catch {
+            // The mutation error remains visible in the form.
+        }
     };
 
     const saveHousehold = async (event) => {
         event.preventDefault();
-        await saveSettings.mutateAsync(household);
+        try {
+            await saveSettings.mutateAsync(household);
+        } catch {
+            // The mutation error remains visible in the form.
+        }
     };
 
     return (
@@ -562,8 +570,12 @@ function AccountEditor({ open, account, onClose }) {
                     ? false
                     : form.includeInSafeToSpend,
         };
-        await save.mutateAsync(account ? { id: account.id, body } : body);
-        onClose();
+        try {
+            await save.mutateAsync(account ? { id: account.id, body } : body);
+            onClose();
+        } catch {
+            // The mutation error remains visible in the open form.
+        }
     };
     return (
         <Modal

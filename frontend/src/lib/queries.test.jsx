@@ -1,9 +1,18 @@
 import { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+    act,
+    cleanup,
+    fireEvent,
+    render,
+    screen,
+    waitFor,
+} from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FeedbackProvider, InlineError } from '../components/ui';
 import { useFinovaMutation } from './queries';
+
+afterEach(cleanup);
 
 function MutationHarness({ mutationFn }) {
     const [closed, setClosed] = useState(false);
@@ -15,8 +24,14 @@ function MutationHarness({ mutationFn }) {
         <form
             onSubmit={async (event) => {
                 event.preventDefault();
-                await mutation.mutateAsync({ name: 'Taylor Household' });
-                setClosed(true);
+                try {
+                    await mutation.mutateAsync({
+                        name: 'Taylor Household',
+                    });
+                    setClosed(true);
+                } catch {
+                    // The mutation owns and renders the error state.
+                }
             }}
         >
             <InlineError>
@@ -71,7 +86,8 @@ describe('useFinovaMutation feedback', () => {
         expect(pending).toBeDisabled();
         fireEvent.click(pending);
         expect(mutationFn).toHaveBeenCalledOnce();
-        resolve({ ok: true });
+        await act(async () => resolve({ ok: true }));
+        await screen.findByText('Closed');
     });
 
     it('keeps a failed form open with an inline error', async () => {

@@ -118,26 +118,30 @@ export default function RecurringEditor({
     });
     const submit = async (event) => {
         event.preventDefault();
-        if (transaction) {
-            const value = body();
-            await mark.mutateAsync({
-                id: transaction.id,
-                body: {
-                    name: value.name,
-                    categoryId: value.categoryId,
-                    amount: value.amount,
-                    frequency: value.frequency,
-                    nextDate: value.nextDate,
-                    amountTolerance: value.amountTolerance,
-                    dateWindowDays: value.dateWindowDays,
-                },
-            });
-        } else if (item) {
-            await update.mutateAsync({ id: item.id, body: body() });
-        } else {
-            await create.mutateAsync(body());
+        try {
+            if (transaction) {
+                const value = body();
+                await mark.mutateAsync({
+                    id: transaction.id,
+                    body: {
+                        name: value.name,
+                        categoryId: value.categoryId,
+                        amount: value.amount,
+                        frequency: value.frequency,
+                        nextDate: value.nextDate,
+                        amountTolerance: value.amountTolerance,
+                        dateWindowDays: value.dateWindowDays,
+                    },
+                });
+            } else if (item) {
+                await update.mutateAsync({ id: item.id, body: body() });
+            } else {
+                await create.mutateAsync(body());
+            }
+            onClose();
+        } catch {
+            // The active mutation error remains visible in the open form.
         }
-        onClose();
     };
     const deleteItem = async () => {
         if (
@@ -147,8 +151,12 @@ export default function RecurringEditor({
             )
         )
             return;
-        await remove.mutateAsync(item.id);
-        onClose();
+        try {
+            await remove.mutateAsync(item.id);
+            onClose();
+        } catch {
+            // The delete error remains visible in the open form.
+        }
     };
 
     const title = transaction
