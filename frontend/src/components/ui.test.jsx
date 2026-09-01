@@ -117,12 +117,14 @@ describe('feedback primitives', () => {
             </FeedbackProvider>
         );
         fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-        expect(screen.getByRole('status')).toHaveTextContent('Profile saved.');
+        expect(
+            screen.getByRole('region', { name: 'Notifications' })
+        ).toHaveTextContent('Profile saved.');
 
         fireEvent.click(
             screen.getByRole('button', { name: 'Dismiss notification' })
         );
-        expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        expect(screen.queryByText('Profile saved.')).not.toBeInTheDocument();
     });
 
     it('removes success messages after six seconds', () => {
@@ -135,7 +137,7 @@ describe('feedback primitives', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
         act(() => vi.advanceTimersByTime(6000));
-        expect(screen.queryByRole('status')).not.toBeInTheDocument();
+        expect(screen.queryByText('Profile saved.')).not.toBeInTheDocument();
     });
 
     it('renders persistent errors as alerts', () => {

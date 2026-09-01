@@ -102,7 +102,9 @@ describe('useFinovaMutation feedback', () => {
         ).toBeEnabled();
         expect(screen.queryByText('Closed')).not.toBeInTheDocument();
         await waitFor(() =>
-            expect(screen.queryByRole('status')).not.toBeInTheDocument()
+            expect(
+                screen.queryByText('Household saved.')
+            ).not.toBeInTheDocument()
         );
     });
 });

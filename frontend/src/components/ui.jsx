@@ -50,6 +50,8 @@ export function FeedbackProvider({ children }) {
             {children}
             <div
                 className="toast-region"
+                role="region"
+                aria-label="Notifications"
                 aria-live="polite"
                 aria-atomic="false"
             >
@@ -72,7 +74,7 @@ function SuccessToast({ item, onDismiss }) {
     }, [item.id, onDismiss]);
 
     return (
-        <div className="toast toast-success" role="status">
+        <div className="toast toast-success">
             <CheckCircle2 aria-hidden="true" />
             <span>{item.message}</span>
             <button

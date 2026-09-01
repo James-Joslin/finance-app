@@ -27,12 +27,16 @@ export default function App() {
     if (enrollment.isLoading) return <PageFallback />;
     if (enrollment.error) {
         return (
-            <div className="enrollment-state">
+            <div className="enrollment-state" role="alert">
                 <AlertCircle />
                 <h1>Finova could not start</h1>
                 <p>{apiError(enrollment.error)}</p>
-                <button className="button" onClick={() => enrollment.refetch()}>
-                    Try again
+                <button
+                    className="button"
+                    onClick={() => enrollment.refetch()}
+                    disabled={enrollment.isFetching}
+                >
+                    {enrollment.isFetching ? 'Trying again…' : 'Try again'}
                 </button>
             </div>
         );
