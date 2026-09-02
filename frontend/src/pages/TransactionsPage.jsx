@@ -243,7 +243,10 @@ export default function TransactionsPage() {
                         categories={categories.data || []}
                         onMarkRecurring={setRecurringTransaction}
                         onPair={setPairTransaction}
-                        onEdit={(item) => { setEditingTransaction(item); setTransactionEditorOpen(true); }}
+                        onEdit={(item) => {
+                            setEditingTransaction(item);
+                            setTransactionEditorOpen(true);
+                        }}
                     />
                     <Pagination
                         page={page}
@@ -273,7 +276,10 @@ export default function TransactionsPage() {
             <TransactionEditor
                 open={transactionEditorOpen}
                 transaction={editingTransaction}
-                onClose={() => { setTransactionEditorOpen(false); setEditingTransaction(null); }}
+                onClose={() => {
+                    setTransactionEditorOpen(false);
+                    setEditingTransaction(null);
+                }}
                 accounts={accounts.data || []}
                 categories={categories.data || []}
             />
@@ -281,7 +287,13 @@ export default function TransactionsPage() {
     );
 }
 
-function TransactionTable({ items, categories, onMarkRecurring, onPair, onEdit }) {
+function TransactionTable({
+    items,
+    categories,
+    onMarkRecurring,
+    onPair,
+    onEdit,
+}) {
     const updateCategory = useFinovaMutation(
         mutations.updateTransactionCategory,
         [

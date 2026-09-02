@@ -289,14 +289,17 @@ export default function TransactionEditor({
                         <div className="split-header">
                             <strong>Split lines</strong>
                             <span>
-                                {money(splitTotal)} of {money(Number(form.amount) || 0)}
+                                {money(splitTotal)} of{' '}
+                                {money(Number(form.amount) || 0)}
                             </span>
                         </div>
                         {form.splits.map((line, index) => (
                             <div className="split-line" key={index}>
                                 <select
                                     required
-                                    aria-label={'Split ' + (index + 1) + ' category'}
+                                    aria-label={
+                                        'Split ' + (index + 1) + ' category'
+                                    }
                                     value={line.categoryId}
                                     onChange={(event) =>
                                         updateLine(
@@ -321,7 +324,9 @@ export default function TransactionEditor({
                                     min="0.01"
                                     step="0.01"
                                     type="number"
-                                    aria-label={'Split ' + (index + 1) + ' amount'}
+                                    aria-label={
+                                        'Split ' + (index + 1) + ' amount'
+                                    }
                                     placeholder="Amount"
                                     value={line.amount}
                                     onChange={(event) =>
@@ -333,11 +338,17 @@ export default function TransactionEditor({
                                     }
                                 />
                                 <input
-                                    aria-label={'Split ' + (index + 1) + ' memo'}
+                                    aria-label={
+                                        'Split ' + (index + 1) + ' memo'
+                                    }
                                     placeholder="Line memo"
                                     value={line.memo}
                                     onChange={(event) =>
-                                        updateLine(index, 'memo', event.target.value)
+                                        updateLine(
+                                            index,
+                                            'memo',
+                                            event.target.value
+                                        )
                                     }
                                 />
                                 <button
@@ -410,7 +421,11 @@ export default function TransactionEditor({
                             (transaction && detail.isLoading)
                         }
                     >
-                        {pending ? 'Saving…' : transaction ? 'Save changes' : 'Add transaction'}
+                        {pending
+                            ? 'Saving…'
+                            : transaction
+                              ? 'Save changes'
+                              : 'Add transaction'}
                     </button>
                 </div>
             </form>

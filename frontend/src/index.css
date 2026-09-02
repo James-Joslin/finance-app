@@ -1426,38 +1426,38 @@ kbd {
     height: 0.8rem;
 }
 .transaction-action {
-.transaction-action {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.25rem;
-}
-.split-label {
-    color: var(--text-muted);
-    font-size: 0.58rem;
-    white-space: nowrap;
-}
-.transaction-splits {
-    display: flex;
-    flex-direction: column;
-    gap: 0.55rem;
-}
-.split-header,
-.split-line {
-    display: grid;
-    grid-template-columns: 1.2fr 0.75fr 1.2fr auto;
-    align-items: center;
-    gap: 0.45rem;
-}
-.split-header {
-    grid-template-columns: 1fr auto;
-    color: var(--text-muted);
-    font-size: 0.64rem;
-}
-.split-line input,
-.split-line select {
-    min-width: 0;
-}
+    .transaction-action {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 0.25rem;
+    }
+    .split-label {
+        color: var(--text-muted);
+        font-size: 0.58rem;
+        white-space: nowrap;
+    }
+    .transaction-splits {
+        display: flex;
+        flex-direction: column;
+        gap: 0.55rem;
+    }
+    .split-header,
+    .split-line {
+        display: grid;
+        grid-template-columns: 1.2fr 0.75fr 1.2fr auto;
+        align-items: center;
+        gap: 0.45rem;
+    }
+    .split-header {
+        grid-template-columns: 1fr auto;
+        color: var(--text-muted);
+        font-size: 0.64rem;
+    }
+    .split-line input,
+    .split-line select {
+        min-width: 0;
+    }
     width: 42px;
     text-align: right;
 }
