@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import {
     Archive,
@@ -21,6 +22,7 @@ import {
     PageState,
     Pill,
 } from '../components/ui';
+import { parseRecordId, useDeepLinkTarget } from '../utils/deepLink';
 import { apiError, money, percent, todayIso } from '../lib/format';
 import {
     mutations,
@@ -34,6 +36,8 @@ import {
 } from '../lib/queries';
 
 export default function SettingsPage() {
+    const [searchParams] = useSearchParams();
+    const accountId = parseRecordId(searchParams.get('accountId'));
     const enrollment = useEnrollmentStatus();
     const settings = useSettings();
     const accounts = useAccounts(true);
@@ -90,6 +94,11 @@ export default function SettingsPage() {
         }
     );
     const pageQueries = [enrollment, settings, accounts, categories, rules];
+    useDeepLinkTarget(
+        accountId,
+        accounts.data,
+        '[data-deep-link-type="account"]'
+    );
 
     useEffect(() => {
         if (enrollment.data?.profile) setProfile(enrollment.data.profile);
@@ -340,6 +349,8 @@ export default function SettingsPage() {
                                     className={
                                         account.isArchived ? 'archived' : ''
                                     }
+                                    data-deep-link-type="account"
+                                    data-deep-link-id={account.id}
                                 >
                                     <span className="account-dot account-0">
                                         <Building2 />

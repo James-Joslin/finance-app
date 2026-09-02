@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import {
     ArrowDown,
@@ -33,9 +34,12 @@ import {
     useFinovaMutation,
     useGoals,
 } from '../lib/queries';
+import { parseRecordId, useDeepLinkTarget } from '../utils/deepLink';
 import { staticAssetUrl } from '../lib/staticAssets';
 
 export default function GoalsPage() {
+    const [searchParams] = useSearchParams();
+    const goalId = parseRecordId(searchParams.get('goalId'));
     const goals = useGoals();
     const accounts = useAccounts();
     const [editor, setEditor] = useState(false);
@@ -46,6 +50,7 @@ export default function GoalsPage() {
         active[0];
     const others = active.filter((goal) => goal.id !== featured?.id);
 
+    useDeepLinkTarget(goalId, goals.data, '[data-deep-link-type="goal"]');
     const night = resolved === 'dark' ? '_night' : '';
     const artwork = {
         cloud: staticAssetUrl(`decor/decor_cloud${night}.png`),
@@ -200,7 +205,11 @@ export default function GoalsPage() {
 
 function FeaturedGoal({ goal, artwork, onEdit }) {
     return (
-        <Card className="featured-goal">
+        <Card
+            className="featured-goal"
+            data-deep-link-type="goal"
+            data-deep-link-id={goal.id}
+        >
             <img
                 className="featured-goal-art"
                 src={artwork}
@@ -284,7 +293,11 @@ function FeaturedGoal({ goal, artwork, onEdit }) {
 
 function GoalCard({ goal, onEdit, onUp, onDown, first, last, pending }) {
     return (
-        <Card className="goal-card">
+        <Card
+            className="goal-card"
+            data-deep-link-type="goal"
+            data-deep-link-id={goal.id}
+        >
             <GoalVisual
                 iconKey={goal.iconKey}
                 colorKey={goal.colorKey}

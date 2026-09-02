@@ -1,3 +1,4 @@
+import { useSearchParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
     ArrowDownToLine,
@@ -43,7 +44,11 @@ import {
     useSuggestions,
 } from '../lib/queries';
 
+import { parseRecordId, useDeepLinkTarget } from '../utils/deepLink';
+
 export default function PlanPage() {
+    const [searchParams] = useSearchParams();
+    const recurringId = parseRecordId(searchParams.get('recurringId'));
     const safety = useSafety();
     const recurring = useRecurring();
     const occurrences = useOccurrences();
@@ -56,6 +61,9 @@ export default function PlanPage() {
     const [budgetOpen, setBudgetOpen] = useState(false);
     const [upcomingOpen, setUpcomingOpen] = useState(false);
     const [schedulesOpen, setSchedulesOpen] = useState(false);
+    useEffect(() => {
+        if (recurringId) setSchedulesOpen(true);
+    }, [recurringId]);
 
     const pageQueries = [
         safety,
@@ -75,6 +83,11 @@ export default function PlanPage() {
     const activeRecurringCount = recurringItems.filter(
         (item) => item.isActive
     ).length;
+    useDeepLinkTarget(
+        recurringId,
+        recurring.data && schedulesOpen,
+        '[data-deep-link-type="recurring"]'
+    );
 
     return (
         <PageState
@@ -450,7 +463,12 @@ function RecurringTimeline({ items, onEdit }) {
     return (
         <div className="recurring-list">
             {items.map((item) => (
-                <article key={item.id} className="recurring-row">
+                <article
+                    key={item.id}
+                    className="recurring-row"
+                    data-deep-link-type="recurring"
+                    data-deep-link-id={item.id}
+                >
                     <span className={'recurring-icon ' + item.kind}>
                         {item.kind === 'income' ? (
                             <ArrowDownToLine />

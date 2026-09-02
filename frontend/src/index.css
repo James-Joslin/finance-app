@@ -399,6 +399,26 @@ button:disabled {
     width: 1rem;
     height: 1rem;
 }
+.deep-link-highlight {
+    animation: deep-link-pulse 1.8s ease-out;
+    outline: 2px solid color-mix(in srgb, var(--brand) 72%, transparent);
+    outline-offset: -2px;
+}
+@keyframes deep-link-pulse {
+    0%,
+    100% {
+        background: var(--surface);
+    }
+    18% {
+        background: color-mix(in srgb, var(--brand-soft) 78%, var(--surface));
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .deep-link-highlight {
+        animation: none;
+        background: color-mix(in srgb, var(--brand-soft) 78%, var(--surface));
+    }
+}
 .global-search-trigger {
     width: 260px;
     height: 38px;

@@ -1014,7 +1014,8 @@ public static class FinovaDataService
         command.Parameters.AddWithValue(name, value ?? DBNull.Value);
 
     public static async Task<TransactionPageDto> GetTransactionsAsync(
-        int? accountId, int? categoryId, string? search, string type, DateOnly? startDate, DateOnly? endDate, int page, int pageSize)
+        int? accountId, int? categoryId, string? search, string type, DateOnly? startDate, DateOnly? endDate, int page, int pageSize,
+        int? transactionId = null)
     {
         if (type is not ("all" or "income" or "spending" or "transfer")) throw new ArgumentException("Unsupported transaction type filter.");
         if (startDate.HasValue && endDate.HasValue && endDate < startDate) throw new ArgumentException("End date must be on or after start date.");
@@ -1022,6 +1023,7 @@ public static class FinovaDataService
         page = Math.Max(1, page);
         pageSize = Math.Clamp(pageSize, 1, 10000);
         var filters = new List<string> { "NOT a.is_archived" };
+        if (transactionId.HasValue) filters.Add("tx.id = @transaction_id");
         if (accountId.HasValue) filters.Add("tx.account_id = @account_id");
         if (categoryId.HasValue) filters.Add("(tx.category_id = @category_id OR EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=tx.id AND s.category_id=@category_id))");
         if (!string.IsNullOrWhiteSpace(search)) filters.Add("(tx.payee ILIKE @search OR tx.memo ILIKE @search OR a.name ILIKE @search)");
@@ -1067,13 +1069,13 @@ public static class FinovaDataService
         var total = 0;
         await using (var countCommand = new NpgsqlCommand(countSql, connection))
         {
-            AddTransactionFilters(countCommand, accountId, categoryId, search, startDate, endDate);
+            AddTransactionFilters(countCommand, accountId, categoryId, search, startDate, endDate, transactionId);
             total = Convert.ToInt32(await countCommand.ExecuteScalarAsync());
         }
         var items = new List<TransactionDtoV2>();
         await using (var command = new NpgsqlCommand(dataSql, connection))
         {
-            AddTransactionFilters(command, accountId, categoryId, search, startDate, endDate);
+            AddTransactionFilters(command, accountId, categoryId, search, startDate, endDate, transactionId);
             command.Parameters.AddWithValue("limit", pageSize);
             command.Parameters.AddWithValue("offset", (page - 1) * pageSize);
             await using var reader = await command.ExecuteReaderAsync();
@@ -1972,18 +1974,18 @@ public static class FinovaDataService
         const string sql = """
             (SELECT 'transaction' AS type, t.id, coalesce(t.payee, t.memo, 'Transaction') AS title,
                 a.name || ' · ' || to_char(t.amount, 'FM999,999,990.00') || ' ' ||
-                    (SELECT currency_code FROM household_settings WHERE id=1) AS subtitle, '/transactions' AS route
+                    (SELECT currency_code FROM household_settings WHERE id=1) AS subtitle, '/transactions?transactionId=' || t.id::text AS route
              FROM transactions t JOIN accounts a ON a.id=t.account_id
-             WHERE t.payee ILIKE @query OR t.memo ILIKE @query ORDER BY t.transaction_date DESC LIMIT 6)
+             WHERE NOT a.is_archived AND (t.payee ILIKE @query OR t.memo ILIKE @query) ORDER BY t.transaction_date DESC LIMIT 6)
             UNION ALL
-            (SELECT 'account', a.id, a.name, coalesce(a.institution, 'Account'), '/settings'
+            (SELECT 'account', a.id, a.name, coalesce(a.institution, 'Account'), '/settings?accountId=' || a.id::text
              FROM accounts a WHERE NOT a.is_archived AND (a.name ILIKE @query OR a.institution ILIKE @query) LIMIT 4)
             UNION ALL
-            (SELECT 'goal', g.id, g.name, coalesce(g.description, 'Savings goal'), '/goals'
+            (SELECT 'goal', g.id, g.name, coalesce(g.description, 'Savings goal'), '/goals?goalId=' || g.id::text
              FROM savings_goals g WHERE g.status <> 'archived' AND (g.name ILIKE @query OR g.description ILIKE @query) LIMIT 4)
             UNION ALL
-            (SELECT 'plan', r.id, r.name, initcap(r.kind) || ' · ' || initcap(r.frequency), '/plan'
-             FROM recurring_items r WHERE r.is_active AND r.name ILIKE @query LIMIT 4)
+            (SELECT 'plan', r.id, r.name, initcap(r.kind) || ' · ' || initcap(r.frequency), '/plan?recurringId=' || r.id::text
+             FROM recurring_items r JOIN accounts a ON a.id=r.account_id WHERE r.is_active AND NOT a.is_archived AND r.name ILIKE @query LIMIT 4)
             LIMIT 16
             """;
         await using var command = new NpgsqlCommand(sql, connection);
@@ -2027,8 +2029,10 @@ public static class FinovaDataService
         reader.IsDBNull(12) ? null : reader.GetString(12), reader.GetDecimal(13), reader.GetInt16(14), reader.GetString(15),
         reader.IsDBNull(16) ? null : DateOnly.FromDateTime(reader.GetDateTime(16)));
 
-    private static void AddTransactionFilters(NpgsqlCommand command, int? accountId, int? categoryId, string? search, DateOnly? start, DateOnly? end)
+    private static void AddTransactionFilters(
+        NpgsqlCommand command, int? accountId, int? categoryId, string? search, DateOnly? start, DateOnly? end, int? transactionId = null)
     {
+        if (transactionId.HasValue) command.Parameters.AddWithValue("transaction_id", transactionId.Value);
         if (accountId.HasValue) command.Parameters.AddWithValue("account_id", accountId.Value);
         if (categoryId.HasValue) command.Parameters.AddWithValue("category_id", categoryId.Value);
         if (!string.IsNullOrWhiteSpace(search)) command.Parameters.AddWithValue("search", $"%{search.Trim()}%");

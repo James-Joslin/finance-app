@@ -1,8 +1,11 @@
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 import PlanPage from './PlanPage';
 
 vi.mock('../components/RecurringEditor', () => ({ default: () => null }));
+
+afterEach(cleanup);
 vi.mock('../components/OccurrenceEditor', () => ({ default: () => null }));
 
 const query = (data) => ({ data, isLoading: false, error: null });
@@ -60,7 +63,11 @@ vi.mock('../lib/queries', () => ({
 
 describe('PlanPage collapsible sections', () => {
     it('starts upcoming items and recurring schedules collapsed and toggles each independently', () => {
-        render(<PlanPage />);
+        render(
+            <MemoryRouter>
+                <PlanPage />
+            </MemoryRouter>
+        );
 
         const upcoming = screen.getByRole('button', {
             name: /upcoming bills and paydays/i,
@@ -80,6 +87,19 @@ describe('PlanPage collapsible sections', () => {
         expect(screen.getByText('Payday')).not.toBeVisible();
 
         fireEvent.click(schedules);
+        expect(schedules).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByText('Payday')).toBeVisible();
+    });
+    it('opens recurring schedules for a deep-linked plan', () => {
+        render(
+            <MemoryRouter initialEntries={['/plan?recurringId=2']}>
+                <PlanPage />
+            </MemoryRouter>
+        );
+
+        const schedules = screen.getByRole('button', {
+            name: /flexible household schedules/i,
+        });
         expect(schedules).toHaveAttribute('aria-expanded', 'true');
         expect(screen.getByText('Payday')).toBeVisible();
     });

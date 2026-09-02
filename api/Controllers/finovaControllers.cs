@@ -131,8 +131,9 @@ public sealed class TransactionsController : ControllerBase
     public async Task<ActionResult<TransactionPageDto>> Get(
         [FromQuery] int? accountId, [FromQuery] int? categoryId, [FromQuery] string? search,
         [FromQuery] string type = "all", [FromQuery] DateOnly? startDate = null,
-        [FromQuery] DateOnly? endDate = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20) =>
-        Ok(await FinovaDataService.GetTransactionsAsync(accountId, categoryId, search, type, startDate, endDate, page, pageSize));
+        [FromQuery] DateOnly? endDate = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] int? transactionId = null) =>
+        Ok(await FinovaDataService.GetTransactionsAsync(accountId, categoryId, search, type, startDate, endDate, page, pageSize, transactionId));
 
     [HttpGet("{id:int}/transfer-candidates")]
     public async Task<ActionResult<IReadOnlyList<TransferCandidateDto>>> TransferCandidates(int id) =>
