@@ -1675,12 +1675,25 @@ public static class FinovaDataService
             INSERT INTO budget_definitions (category_id, monthly_amount, rollover_enabled, effective_from)
             VALUES (@category, @amount, @rollover, @month)
             ON CONFLICT (category_id) DO UPDATE SET monthly_amount=excluded.monthly_amount,
-                rollover_enabled=excluded.rollover_enabled, updated_at=CURRENT_TIMESTAMP, is_active=true
+                rollover_enabled=excluded.rollover_enabled, updated_at=CURRENT_TIMESTAMP
             RETURNING id
         """;
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         await using var transaction = await connection.BeginTransactionAsync();
+        await using (var lockCommand = new NpgsqlCommand(
+            "SELECT pg_advisory_xact_lock(hashtext('finova-budget-month:' || @month::text))", connection, transaction))
+        {
+            lockCommand.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+            await lockCommand.ExecuteNonQueryAsync();
+        }
+        await using (var closed = new NpgsqlCommand(
+            "SELECT 1 FROM budget_month_closures WHERE month=@month", connection, transaction))
+        {
+            closed.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+            if (await closed.ExecuteScalarAsync() is not null)
+                throw new ResourceConflictException("The current budget month is finalized and cannot be edited.");
+        }
         await using (var category = new NpgsqlCommand(
             "SELECT 1 FROM categories WHERE id=@id AND kind='expense' AND NOT is_archived", connection, transaction))
         {
@@ -1713,34 +1726,85 @@ public static class FinovaDataService
         return (await GetBudgetsAsync(month)).Single(b => b.Id == id);
     }
 
-    public static async Task<IReadOnlyList<BudgetDto>> GetBudgetsAsync(DateOnly? requestedMonth = null)
+    public static async Task<BudgetMonthIndexDto> GetBudgetMonthIndexAsync()
+    {
+        var today = await GetHouseholdTodayAsync();
+        var current = new DateOnly(today.Year, today.Month, 1);
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            WITH bounds AS (
+                SELECT coalesce(date_trunc('month', min(effective_from))::date, @current::date) AS first_month
+                FROM budget_definitions
+            ), months AS (
+                SELECT generate_series(first_month, @current::date, interval '1 month')::date AS month
+                FROM bounds
+            )
+            SELECT months.month, c.closed_at, count(b.id)
+            FROM months
+            LEFT JOIN budget_month_closures c ON c.month=months.month
+            LEFT JOIN budget_definitions b ON b.effective_from < months.month + interval '1 month'
+            GROUP BY months.month, c.closed_at
+            ORDER BY months.month DESC
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("current", current.ToDateTime(TimeOnly.MinValue));
+        await using var reader = await command.ExecuteReaderAsync();
+        var months = new List<BudgetMonthSummaryDto>();
+        while (await reader.ReadAsync())
+        {
+            months.Add(new(
+                DateOnly.FromDateTime(reader.GetDateTime(0)),
+                !reader.IsDBNull(1),
+                reader.IsDBNull(1) ? null : ReadTimestamp(reader.GetValue(1)),
+                Convert.ToInt32(reader.GetInt64(2))));
+        }
+        return new(current, months);
+    }
+
+    public static async Task<IReadOnlyList<BudgetDto>> GetBudgetsAsync(
+        DateOnly? requestedMonth = null, bool includeInactive = false)
     {
         await EnsureRecurringOccurrencesAsync();
         var today = await GetHouseholdTodayAsync();
-        var month = requestedMonth.HasValue ? new DateOnly(requestedMonth.Value.Year, requestedMonth.Value.Month, 1) : new(today.Year, today.Month, 1);
-        var nextMonth = month.AddMonths(1);
+        var month = requestedMonth.HasValue
+            ? new DateOnly(requestedMonth.Value.Year, requestedMonth.Value.Month, 1)
+            : new(today.Year, today.Month, 1);
+        if (month > new DateOnly(today.Year, today.Month, 1))
+            throw new ArgumentException("Budget history cannot be viewed in the future.");
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
+        return await GetBudgetsAsync(connection, null, month, includeInactive);
+    }
+
+    private static async Task<IReadOnlyList<BudgetDto>> GetBudgetsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction? transaction, DateOnly month, bool includeInactive)
+    {
+        var nextMonth = month.AddMonths(1);
         const string sql = """
             SELECT b.id, b.category_id, c.name, c.icon_key, c.color_key, b.monthly_amount, b.rollover_enabled,
                 coalesce((SELECT sum(ro.expected_amount) FROM recurring_occurrences ro
                     JOIN recurring_items r ON r.id=ro.recurring_item_id
                     WHERE r.category_id=b.category_id AND r.kind='bill' AND r.is_active AND ro.status='expected'
                     AND ro.due_date >= @month AND ro.due_date < @next_month), 0),
-                date_trunc('month', b.effective_from)::date
+                date_trunc('month', b.effective_from)::date, b.is_active
             FROM budget_definitions b JOIN categories c ON c.id=b.category_id
-            WHERE b.is_active AND b.effective_from < @next_month ORDER BY c.name
+            WHERE b.effective_from < @next_month AND (@include_inactive OR b.is_active)
+            ORDER BY c.name
             """;
-        await using var command = new NpgsqlCommand(sql, connection);
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
         command.Parameters.AddWithValue("next_month", nextMonth.ToDateTime(TimeOnly.MinValue));
+        command.Parameters.AddWithValue("include_inactive", includeInactive);
         var raw = new List<BudgetDefinitionRow>();
         await using (var reader = await command.ExecuteReaderAsync())
         {
             while (await reader.ReadAsync()) raw.Add(new(reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2), reader.GetString(3),
-                reader.GetString(4), reader.GetDecimal(5), reader.GetBoolean(6), reader.GetDecimal(7), DateOnly.FromDateTime(reader.GetDateTime(8))));
+                reader.GetString(4), reader.GetDecimal(5), reader.GetBoolean(6), reader.GetDecimal(7), DateOnly.FromDateTime(reader.GetDateTime(8)), reader.GetBoolean(9)));
         }
         var result = new List<BudgetDto>();
+        var closedAt = await GetBudgetMonthClosedAtAsync(connection, transaction, month);
+        var isClosed = closedAt.HasValue;
         foreach (var item in raw)
         {
             const string historySql = """
@@ -1748,7 +1812,9 @@ public static class FinovaDataService
                     coalesce(bm.base_amount, @current_amount),
                     coalesce(bm.rollover_enabled, @current_rollover),
                     coalesce(sum(CASE WHEN t.amount < 0 AND NOT t.is_transfer AND NOT t.is_reconciliation_adjustment AND NOT a.is_archived
-                        THEN coalesce(posting.amount, 0) ELSE 0 END), 0)
+                        THEN coalesce(posting.amount, 0) ELSE 0 END), 0),
+                    bm.rollover_in, bm.spent_amount, bm.available_amount, bm.scheduled_amount, bm.remaining_after_scheduled,
+                    bm.remaining_amount, bm.progress_percent
                 FROM generate_series(@effective::date, @month::date, interval '1 month') AS months(month)
                 LEFT JOIN budget_months bm ON bm.budget_id=@budget AND bm.month=months.month::date
                 LEFT JOIN transactions t ON t.transaction_date >= months.month
@@ -1761,10 +1827,11 @@ public static class FinovaDataService
                     SELECT t.category_id, abs(t.amount)
                     WHERE NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id)
                 ) posting ON posting.category_id=@category
-                GROUP BY months.month, bm.base_amount, bm.rollover_enabled
+                GROUP BY months.month, bm.base_amount, bm.rollover_enabled, bm.rollover_in, bm.spent_amount,
+                    bm.available_amount, bm.scheduled_amount, bm.remaining_after_scheduled, bm.remaining_amount, bm.progress_percent
                 ORDER BY months.month
                 """;
-            await using var history = new NpgsqlCommand(historySql, connection);
+            await using var history = new NpgsqlCommand(historySql, connection, transaction);
             history.Parameters.AddWithValue("effective", item.EffectiveFrom.ToDateTime(TimeOnly.MinValue));
             history.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
             history.Parameters.AddWithValue("budget", item.Id);
@@ -1778,17 +1845,153 @@ public static class FinovaDataService
                 var rowMonth = DateOnly.FromDateTime(historyReader.GetDateTime(0));
                 var baseAmount = historyReader.GetDecimal(1);
                 var rollover = historyReader.GetBoolean(2);
-                var spent = historyReader.GetDecimal(3);
-                var calculated = FinanceMath.CalculateBudget(baseAmount, rollover, priorRemaining, spent);
+                var liveSpent = historyReader.GetDecimal(3);
+                var snapshotRollover = historyReader.IsDBNull(4) ? (decimal?)null : historyReader.GetDecimal(4);
+                var snapshotSpent = historyReader.IsDBNull(5) ? (decimal?)null : historyReader.GetDecimal(5);
+                var snapshotAvailable = historyReader.IsDBNull(6) ? (decimal?)null : historyReader.GetDecimal(6);
+                var snapshotScheduled = historyReader.IsDBNull(7) ? (decimal?)null : historyReader.GetDecimal(7);
+                var snapshotAfterScheduled = historyReader.IsDBNull(8) ? (decimal?)null : historyReader.GetDecimal(8);
+                var snapshotRemaining = historyReader.IsDBNull(9) ? (decimal?)null : historyReader.GetDecimal(9);
+                var snapshotProgress = historyReader.IsDBNull(10) ? (decimal?)null : historyReader.GetDecimal(10);
+                var finalized = snapshotRemaining.HasValue && snapshotAvailable.HasValue;
+                var spent = finalized ? snapshotSpent ?? liveSpent : liveSpent;
+                var calculated = finalized
+                    ? new BudgetResult(
+                        snapshotRollover ?? Math.Max(0, snapshotAvailable!.Value - Math.Max(0, baseAmount)),
+                        snapshotAvailable!.Value,
+                        snapshotRemaining!.Value,
+                        snapshotProgress ?? 0)
+                    : FinanceMath.CalculateBudget(baseAmount, rollover, priorRemaining, spent);
+                var scheduled = finalized ? snapshotScheduled ?? 0 : rowMonth == month ? item.Scheduled : 0;
+                var afterScheduled = finalized ? snapshotAfterScheduled ?? calculated.Remaining - scheduled : calculated.Remaining - scheduled;
                 if (rowMonth == month)
+                {
                     result.Add(new(item.Id, item.CategoryId, item.Name, item.Icon, item.Color, baseAmount, rollover,
-                        calculated.RolloverIn, calculated.Available, spent, item.Scheduled,
-                        calculated.Remaining - item.Scheduled, calculated.Remaining, calculated.ProgressPercent));
+                        calculated.RolloverIn, calculated.Available, spent, scheduled, afterScheduled, calculated.Remaining,
+                        calculated.ProgressPercent, month, item.IsActive, isClosed, closedAt));
+                }
                 priorRemaining = calculated.Remaining;
             }
         }
         return result;
     }
+
+    public static async Task<BudgetMonthSummaryDto> CloseBudgetMonthAsync(CloseBudgetMonthRequest request)
+    {
+        await EnsureRecurringOccurrencesAsync();
+        var today = await GetHouseholdTodayAsync();
+        var current = new DateOnly(today.Year, today.Month, 1);
+        var month = new DateOnly(request.Month.Year, request.Month.Month, 1);
+        if (month > current) throw new ArgumentException("A future budget month cannot be finalized.");
+        BudgetMonthSummaryDto summary = new(month, false, null, 0);
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            await using (var lockCommand = new NpgsqlCommand(
+                "SELECT pg_advisory_xact_lock(hashtext('finova-budget-month:' || @month::text))", connection, transaction))
+            {
+                lockCommand.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+                await lockCommand.ExecuteNonQueryAsync();
+            }
+            await using (var existing = new NpgsqlCommand(
+                "SELECT closed_at FROM budget_month_closures WHERE month=@month", connection, transaction))
+            {
+                existing.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+                var existingValue = await existing.ExecuteScalarAsync();
+                if (existingValue is not null)
+                {
+                    var closedAt = ReadTimestamp(existingValue);
+                    await using var count = new NpgsqlCommand("SELECT count(*) FROM budget_months WHERE month=@month", connection, transaction);
+                    count.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+                    summary = new(month, true, closedAt, Convert.ToInt32(await count.ExecuteScalarAsync()));
+                    return;
+                }
+            }
+            var budgets = await GetBudgetsAsync(connection, transaction, month, true);
+            foreach (var budget in budgets)
+            {
+                const string upsert = """
+                    INSERT INTO budget_months (budget_id, month, base_amount, rollover_in, spent_amount, rollover_enabled,
+                        available_amount, scheduled_amount, remaining_after_scheduled, remaining_amount, progress_percent)
+                    VALUES (@budget, @month, @base, @rollover_in, @spent, @rollover_enabled,
+                        @available, @scheduled, @after_scheduled, @remaining, @progress)
+                    ON CONFLICT (budget_id, month) DO UPDATE SET
+                        base_amount=excluded.base_amount, rollover_in=excluded.rollover_in,
+                        spent_amount=excluded.spent_amount, rollover_enabled=excluded.rollover_enabled,
+                        available_amount=excluded.available_amount, scheduled_amount=excluded.scheduled_amount,
+                        remaining_after_scheduled=excluded.remaining_after_scheduled,
+                        remaining_amount=excluded.remaining_amount, progress_percent=excluded.progress_percent
+                    """;
+                await using var command = new NpgsqlCommand(upsert, connection, transaction);
+                command.Parameters.AddWithValue("budget", budget.Id);
+                command.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+                command.Parameters.AddWithValue("base", budget.MonthlyAmount);
+                command.Parameters.AddWithValue("rollover_in", budget.RolloverIn);
+                command.Parameters.AddWithValue("spent", budget.SpentAmount);
+                command.Parameters.AddWithValue("rollover_enabled", budget.RolloverEnabled);
+                command.Parameters.AddWithValue("available", budget.AvailableAmount);
+                command.Parameters.AddWithValue("scheduled", budget.ScheduledAmount);
+                command.Parameters.AddWithValue("after_scheduled", budget.RemainingAfterScheduled);
+                command.Parameters.AddWithValue("remaining", budget.RemainingAmount);
+                command.Parameters.AddWithValue("progress", budget.ProgressPercent);
+                await command.ExecuteNonQueryAsync();
+            }
+            await using (var close = new NpgsqlCommand(
+                "INSERT INTO budget_month_closures (month) VALUES (@month)", connection, transaction))
+            {
+                close.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+                await close.ExecuteNonQueryAsync();
+            }
+            await using var countCommand = new NpgsqlCommand("SELECT count(*) FROM budget_months WHERE month=@month", connection, transaction);
+            countCommand.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+            summary = new(month, true, await GetBudgetMonthClosedAtAsync(connection, transaction, month), Convert.ToInt32(await countCommand.ExecuteScalarAsync()));
+        });
+        return summary;
+    }
+
+    public static async Task<BudgetDto> SetBudgetActiveAsync(int id, SetBudgetActiveRequest request)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = "UPDATE budget_definitions SET is_active=@active, updated_at=CURRENT_TIMESTAMP WHERE id=@id RETURNING id";
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("id", id);
+        command.Parameters.AddWithValue("active", request.IsActive);
+        if (await command.ExecuteScalarAsync() is null) throw new ResourceNotFoundException("Budget was not found.");
+        return (await GetBudgetsAsync(null, true)).Single(b => b.Id == id);
+    }
+
+    public static async Task<bool> DeleteBudgetAsync(int id)
+    {
+        var deleted = false;
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            await using (var references = new NpgsqlCommand("SELECT count(*) FROM budget_months WHERE budget_id=@id", connection, transaction))
+            {
+                references.Parameters.AddWithValue("id", id);
+                if (Convert.ToInt64(await references.ExecuteScalarAsync()) > 0)
+                    throw new ResourceConflictException("This budget has monthly history. Deactivate it instead.");
+            }
+            await using var command = new NpgsqlCommand("DELETE FROM budget_definitions WHERE id=@id", connection, transaction);
+            command.Parameters.AddWithValue("id", id);
+            deleted = await command.ExecuteNonQueryAsync() > 0;
+        });
+        return deleted;
+    }
+
+    private static async Task<DateTimeOffset?> GetBudgetMonthClosedAtAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, DateOnly month)
+    {
+        await using var command = new NpgsqlCommand("SELECT closed_at FROM budget_month_closures WHERE month=@month", connection, transaction);
+        command.Parameters.AddWithValue("month", month.ToDateTime(TimeOnly.MinValue));
+        var value = await command.ExecuteScalarAsync();
+        return value is null ? null : ReadTimestamp(value);
+    }
+
+    private static DateTimeOffset ReadTimestamp(object value) => value switch
+    {
+        DateTimeOffset timestamp => timestamp,
+        DateTime timestamp => new(DateTime.SpecifyKind(timestamp, DateTimeKind.Utc)),
+        _ => throw new InvalidCastException("Unexpected budget timestamp type."),
+    };
 
     public static async Task<IReadOnlyList<RecurringSuggestionDto>> GetRecurringSuggestionsAsync()
     {
@@ -2149,5 +2352,5 @@ public static class FinovaDataService
         int AccountId, string AccountName, int Priority, string IconKey, string ColorKey, int? ImageId, string Status);
     private sealed record PatternRow(int AccountId, string AccountName, string Name, DateOnly Date, decimal Amount);
     private sealed record BudgetDefinitionRow(int Id, int CategoryId, string Name, string Icon, string Color,
-        decimal Amount, bool Rollover, decimal Scheduled, DateOnly EffectiveFrom);
+        decimal Amount, bool Rollover, decimal Scheduled, DateOnly EffectiveFrom, bool IsActive);
 }

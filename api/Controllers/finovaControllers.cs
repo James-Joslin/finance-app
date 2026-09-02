@@ -349,12 +349,29 @@ public sealed class PlanController : ControllerBase
         Ok(await FinovaDataService.GetRecurringSuggestionsAsync());
 
     [HttpGet("budgets")]
-    public async Task<ActionResult<IReadOnlyList<BudgetDto>>> Budgets([FromQuery] DateOnly? month = null) =>
-        Ok(await FinovaDataService.GetBudgetsAsync(month));
+    public async Task<ActionResult<IReadOnlyList<BudgetDto>>> Budgets(
+        [FromQuery] DateOnly? month = null, [FromQuery] bool includeInactive = false) =>
+        Ok(await FinovaDataService.GetBudgetsAsync(month, includeInactive));
+
+    [HttpGet("budgets/months")]
+    public async Task<ActionResult<BudgetMonthIndexDto>> BudgetMonths() =>
+        Ok(await FinovaDataService.GetBudgetMonthIndexAsync());
 
     [HttpPut("budgets")]
     public async Task<ActionResult<BudgetDto>> PutBudget(SaveBudgetRequest request) =>
         Ok(await FinovaDataService.SaveBudgetAsync(request));
+
+    [HttpPost("budgets/close")]
+    public async Task<ActionResult<BudgetMonthSummaryDto>> CloseBudgetMonth(CloseBudgetMonthRequest request) =>
+        Ok(await FinovaDataService.CloseBudgetMonthAsync(request));
+
+    [HttpPatch("budgets/{id:int}/active")]
+    public async Task<ActionResult<BudgetDto>> SetBudgetActive(int id, SetBudgetActiveRequest request) =>
+        Ok(await FinovaDataService.SetBudgetActiveAsync(id, request));
+
+    [HttpDelete("budgets/{id:int}")]
+    public async Task<IActionResult> DeleteBudget(int id) =>
+        await FinovaDataService.DeleteBudgetAsync(id) ? NoContent() : NotFound();
 
     [HttpGet("safety")]
     public async Task<ActionResult<IReadOnlyList<AccountSafetyDto>>> Safety() =>

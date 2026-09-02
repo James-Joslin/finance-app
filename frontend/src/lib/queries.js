@@ -77,10 +77,19 @@ export const useOccurrences = (params) =>
         queryKey: [...queryKeys.occurrences, params || {}],
         queryFn: () => get('/plan/occurrences', params),
     });
-export const useBudgets = (month) =>
+export const useBudgetMonths = () =>
     useQuery({
-        queryKey: [...queryKeys.budgets, month || 'current'],
-        queryFn: () => get('/plan/budgets', month ? { month } : undefined),
+        queryKey: [...queryKeys.budgets, 'months'],
+        queryFn: () => get('/plan/budgets/months'),
+    });
+export const useBudgets = (month, includeInactive = false) =>
+    useQuery({
+        queryKey: [...queryKeys.budgets, month || 'current', includeInactive],
+        queryFn: () =>
+            get('/plan/budgets', {
+                ...(month ? { month } : {}),
+                includeInactive,
+            }),
     });
 export const useSafety = () =>
     useQuery({
@@ -196,6 +205,10 @@ export const mutations = {
     deleteRecurring: (id) => del('/plan/recurring/' + id),
     updateOccurrence: ({ id, body }) => put('/plan/occurrences/' + id, body),
     saveBudget: (body) => put('/plan/budgets', body),
+    closeBudgetMonth: (body) => post('/plan/budgets/close', body),
+    setBudgetActive: ({ id, isActive }) =>
+        patch('/plan/budgets/' + id + '/active', { isActive }),
+    deleteBudget: (id) => del('/plan/budgets/' + id),
 };
 
 export const searchFinova = (query) => get('/search', { q: query });

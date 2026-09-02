@@ -334,12 +334,30 @@ public sealed record BudgetDto(
     decimal ScheduledAmount,
     decimal RemainingAfterScheduled,
     decimal RemainingAmount,
-    decimal ProgressPercent);
+    decimal ProgressPercent,
+    DateOnly Month,
+    bool IsActive,
+    bool IsClosed,
+    DateTimeOffset? ClosedAt);
 
 public sealed record SaveBudgetRequest(
     int CategoryId,
     decimal MonthlyAmount,
     bool RolloverEnabled);
+
+public sealed record BudgetMonthSummaryDto(
+    DateOnly Month,
+    bool IsClosed,
+    DateTimeOffset? ClosedAt,
+    int BudgetCount);
+
+public sealed record BudgetMonthIndexDto(
+    DateOnly CurrentMonth,
+    IReadOnlyList<BudgetMonthSummaryDto> Months);
+
+public sealed record CloseBudgetMonthRequest(DateOnly Month);
+
+public sealed record SetBudgetActiveRequest(bool IsActive);
 
 public sealed record AccountSafetyDto(
     int AccountId,
