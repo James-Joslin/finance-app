@@ -105,6 +105,28 @@ public sealed class TransactionsController : ControllerBase
     public async Task<ActionResult<IReadOnlyList<TransactionTypeCodeDto>>> GetTypeCodes() =>
         Ok(await FinovaDataService.GetTransactionTypeCodesAsync());
 
+    [HttpPost]
+    public async Task<ActionResult<TransactionDetailDto>> Post(SaveManualTransactionRequest request)
+    {
+        var transaction = await FinovaDataService.CreateManualTransactionAsync(request);
+        return Created($"/transactions/{transaction.Transaction.Id}", transaction);
+    }
+
+    [HttpGet("{id:int}")]
+    public async Task<ActionResult<TransactionDetailDto>> Get(int id) =>
+        Ok(await FinovaDataService.GetTransactionDetailsAsync(id));
+
+    [HttpPut("{id:int}")]
+    public async Task<ActionResult<TransactionDetailDto>> Put(int id, SaveManualTransactionRequest request) =>
+        Ok(await FinovaDataService.UpdateManualTransactionAsync(id, request));
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id)
+    {
+        await FinovaDataService.DeleteManualTransactionAsync(id);
+        return NoContent();
+    }
+
     [HttpGet]
     public async Task<ActionResult<TransactionPageDto>> Get(
         [FromQuery] int? accountId, [FromQuery] int? categoryId, [FromQuery] string? search,
