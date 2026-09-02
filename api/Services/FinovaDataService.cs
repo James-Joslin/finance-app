@@ -820,12 +820,8 @@ public static class FinovaDataService
             long? importBatchId;
             int? pairedId = null;
             await using (var existing = new NpgsqlCommand("""
-                SELECT t.source_file_type, t.fitid, t.import_batch_id,
-                    CASE WHEN p.transaction_id_a=t.id THEN p.transaction_id_b ELSE p.transaction_id_a END
-                FROM transactions t
-                LEFT JOIN transaction_transfer_pairs p
-                    ON p.transaction_id_a=t.id OR p.transaction_id_b=t.id
-                WHERE t.id=@id FOR UPDATE
+                SELECT t.source_file_type, t.fitid, t.import_batch_id
+                FROM transactions t WHERE t.id=@id FOR UPDATE
                 """, connection, transaction))
             {
                 existing.Parameters.AddWithValue("id", id);
@@ -834,8 +830,15 @@ public static class FinovaDataService
                 sourceFileType = reader.IsDBNull(0) ? null : reader.GetString(0);
                 fitId = reader.IsDBNull(1) ? null : reader.GetString(1);
                 importBatchId = reader.IsDBNull(2) ? null : reader.GetInt64(2);
-                pairedId = reader.IsDBNull(3) ? null : reader.GetInt32(3);
             }
+            await using var paired = new NpgsqlCommand("""
+                SELECT CASE WHEN transaction_id_a=@id THEN transaction_id_b ELSE transaction_id_a END
+                FROM transaction_transfer_pairs
+                WHERE transaction_id_a=@id OR transaction_id_b=@id LIMIT 1
+                """, connection, transaction);
+            paired.Parameters.AddWithValue("id", id);
+            var pairValue = await paired.ExecuteScalarAsync();
+            pairedId = pairValue is null or DBNull ? null : Convert.ToInt32(pairValue);
             EnsureEditableManualTransaction(sourceFileType, fitId, importBatchId);
 
             await using (var resetOccurrence = new NpgsqlCommand("""
