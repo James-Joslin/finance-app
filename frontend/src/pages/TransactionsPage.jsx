@@ -7,6 +7,8 @@ import {
     FileUp,
     Filter,
     History,
+    Link2,
+    Unlink,
     RefreshCw,
     RotateCcw,
     Search,
@@ -31,6 +33,7 @@ import {
     useImportRows,
     useImports,
     useTransactions,
+    useTransferCandidates,
 } from '../lib/queries';
 
 const initialFilters = {
@@ -48,6 +51,7 @@ export default function TransactionsPage() {
     const [filtersOpen, setFiltersOpen] = useState(false);
     const [importOpen, setImportOpen] = useState(false);
     const [recurringTransaction, setRecurringTransaction] = useState(null);
+    const [pairTransaction, setPairTransaction] = useState(null);
     const accounts = useAccounts();
     const categories = useCategories();
 
@@ -225,6 +229,7 @@ export default function TransactionsPage() {
                         items={transactions.data?.items || []}
                         categories={categories.data || []}
                         onMarkRecurring={setRecurringTransaction}
+                        onPair={setPairTransaction}
                     />
                     <Pagination
                         page={page}
@@ -246,11 +251,16 @@ export default function TransactionsPage() {
                 accounts={accounts.data || []}
                 categories={categories.data || []}
             />
+            <TransferPairModal
+                open={Boolean(pairTransaction)}
+                transaction={pairTransaction}
+                onClose={() => setPairTransaction(null)}
+            />
         </div>
     );
 }
 
-function TransactionTable({ items, categories, onMarkRecurring }) {
+function TransactionTable({ items, categories, onMarkRecurring, onPair }) {
     const updateCategory = useFinovaMutation(
         mutations.updateTransactionCategory,
         [
@@ -261,6 +271,18 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
             queryKeys.rules,
         ],
         { successMessage: 'Transaction category updated.' }
+    );
+    const unpair = useFinovaMutation(
+        mutations.unpairTransfer,
+        [
+            ['transactions'],
+            queryKeys.dashboard,
+            queryKeys.insights,
+            queryKeys.budgets,
+            queryKeys.safety,
+            ['transfer-candidates'],
+        ],
+        { successMessage: 'Transfer unpaired.' }
     );
     const changeCategory = (item, categoryId) => {
         const saveRule = window.confirm(
@@ -367,6 +389,42 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
                                     {money(item.amount)}
                                 </td>
                                 <td className="transaction-action">
+                                    {item.pairedTransactionId ? (
+                                        <>
+                                            <span
+                                                className="recurring-linked"
+                                                title={
+                                                    'Paired with ' +
+                                                    item.pairedAccountName
+                                                }
+                                            >
+                                                <Link2 />
+                                                <span>
+                                                    {item.pairedAccountName}
+                                                </span>
+                                            </span>
+                                            <button
+                                                className="icon-button"
+                                                disabled={unpair.isPending}
+                                                onClick={() =>
+                                                    unpair.mutate(item.id)
+                                                }
+                                                aria-label="Unpair transfer"
+                                                title="Unpair transfer"
+                                            >
+                                                <Unlink />
+                                            </button>
+                                        </>
+                                    ) : (
+                                        <button
+                                            className="icon-button"
+                                            onClick={() => onPair(item)}
+                                            aria-label="Pair transfer"
+                                            title="Pair with another account transaction"
+                                        >
+                                            <Link2 />
+                                        </button>
+                                    )}
                                     {item.recurringItemId ? (
                                         <span
                                             className="recurring-linked"
@@ -431,6 +489,24 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
                                 {isIncomeTransaction(item) ? '+' : ''}
                                 {money(item.amount)}
                             </strong>
+                            {item.pairedTransactionId ? (
+                                <button
+                                    className="icon-button"
+                                    onClick={() => unpair.mutate(item.id)}
+                                    disabled={unpair.isPending}
+                                    aria-label="Unpair transfer"
+                                >
+                                    <Unlink />
+                                </button>
+                            ) : (
+                                <button
+                                    className="icon-button"
+                                    onClick={() => onPair(item)}
+                                    aria-label="Pair transfer"
+                                >
+                                    <Link2 />
+                                </button>
+                            )}
                             {item.recurringItemId ? (
                                 <span
                                     className="recurring-linked"
@@ -459,9 +535,98 @@ function TransactionTable({ items, categories, onMarkRecurring }) {
                 ))}
             </div>
             <InlineError>
-                {updateCategory.error && apiError(updateCategory.error)}
+                {(updateCategory.error || unpair.error) &&
+                    apiError(updateCategory.error || unpair.error)}
             </InlineError>
         </>
+    );
+}
+
+function TransferPairModal({ open, transaction, onClose }) {
+    const candidates = useTransferCandidates(transaction?.id);
+    const pair = useFinovaMutation(
+        mutations.pairTransfer,
+        [
+            ['transactions'],
+            queryKeys.dashboard,
+            queryKeys.insights,
+            queryKeys.budgets,
+            queryKeys.safety,
+            ['transfer-candidates'],
+        ],
+        { successMessage: 'Transfer paired.' }
+    );
+    const choose = async (candidate) => {
+        try {
+            await pair.mutateAsync({
+                id: transaction.id,
+                pairedTransactionId: candidate.id,
+            });
+            onClose();
+        } catch {
+            // Keep the modal open so the error remains visible.
+        }
+    };
+    return (
+        <Modal
+            open={open}
+            onClose={onClose}
+            title="Pair transfer"
+            copy="Choose the matching transaction in another account. Amounts must be equal and opposite."
+            wide
+        >
+            <div className="pair-candidate-list">
+                {candidates.isLoading ? (
+                    <p className="muted-copy">Finding matching transactions…</p>
+                ) : null}
+                {!candidates.isLoading &&
+                (candidates.data || []).length === 0 ? (
+                    <p className="muted-copy">
+                        No unpaired transaction with the opposite amount was
+                        found.
+                    </p>
+                ) : null}
+                {(candidates.data || []).map((candidate) => (
+                    <button
+                        className="pair-candidate"
+                        key={candidate.id}
+                        onClick={() => choose(candidate)}
+                        disabled={pair.isPending}
+                    >
+                        <span>
+                            <strong>
+                                {candidate.payee ||
+                                    candidate.memo ||
+                                    'Transaction'}
+                            </strong>
+                            <small>
+                                {candidate.accountName} ·{' '}
+                                {shortDate(candidate.date)}
+                            </small>
+                        </span>
+                        <strong
+                            className={candidate.amount >= 0 ? 'positive' : ''}
+                        >
+                            {candidate.amount >= 0 ? '+' : ''}
+                            {money(candidate.amount)}
+                        </strong>
+                    </button>
+                ))}
+                <InlineError>
+                    {(candidates.error || pair.error) &&
+                        apiError(candidates.error || pair.error)}
+                </InlineError>
+                <div className="modal-actions">
+                    <button
+                        type="button"
+                        className="button secondary"
+                        onClick={onClose}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </Modal>
     );
 }
 

@@ -26,6 +26,7 @@ import {
     mutations,
     queryKeys,
     useAccounts,
+    useCategories,
     useEnrollmentStatus,
     useFinovaMutation,
     useSettings,
@@ -36,11 +37,14 @@ export default function SettingsPage() {
     const enrollment = useEnrollmentStatus();
     const settings = useSettings();
     const accounts = useAccounts(true);
+    const categories = useCategories(true);
     const rules = useTransactionRules();
     const { preference, setPreference } = useTheme();
     const [profile, setProfile] = useState(null);
     const [household, setHousehold] = useState(null);
     const [accountEditor, setAccountEditor] = useState(false);
+    const [categoryEditor, setCategoryEditor] = useState(false);
+    const [ruleEditor, setRuleEditor] = useState(false);
     const saveProfile = useFinovaMutation(
         mutations.saveEnrollment,
         [queryKeys.enrollment, queryKeys.settings, queryKeys.dashboard],
@@ -56,7 +60,36 @@ export default function SettingsPage() {
         [queryKeys.rules],
         { successMessage: 'Automatic category rule removed.' }
     );
-    const pageQueries = [enrollment, settings, accounts, rules];
+    const saveCategory = useFinovaMutation(
+        (value) =>
+            value.id
+                ? mutations.updateCategory(value)
+                : mutations.createCategory(value.body),
+        [queryKeys.categories, queryKeys.rules, queryKeys.dashboard],
+        {
+            successMessage: (data, value) =>
+                value.id ? 'Category updated.' : 'Category created.',
+        }
+    );
+    const deleteCategory = useFinovaMutation(
+        mutations.deleteCategory,
+        [queryKeys.categories, queryKeys.dashboard],
+        { successMessage: 'Category deleted.' }
+    );
+    const saveRule = useFinovaMutation(
+        (value) =>
+            value.id
+                ? mutations.updateTransactionRule(value)
+                : mutations.createTransactionRule(value.body),
+        [queryKeys.rules, queryKeys.categories],
+        {
+            successMessage: (data, value) =>
+                value.id
+                    ? 'Automatic category rule updated.'
+                    : 'Automatic category rule created.',
+        }
+    );
+    const pageQueries = [enrollment, settings, accounts, categories, rules];
 
     useEffect(() => {
         if (enrollment.data?.profile) setProfile(enrollment.data.profile);
@@ -92,17 +125,20 @@ export default function SettingsPage() {
                 enrollment.isLoading ||
                 settings.isLoading ||
                 accounts.isLoading ||
+                categories.isLoading ||
                 rules.isLoading
             }
             error={
                 (enrollment.error ||
                     settings.error ||
                     accounts.error ||
+                    categories.error ||
                     rules.error) &&
                 apiError(
                     enrollment.error ||
                         settings.error ||
                         accounts.error ||
+                        categories.error ||
                         rules.error
                 )
             }
@@ -357,6 +393,131 @@ export default function SettingsPage() {
                                     <Tags />
                                 </span>
                                 <span>
+                                    <h2>Categories</h2>
+                                    <p>
+                                        Organise transactions and control how
+                                        they affect your plans.
+                                    </p>
+                                </span>
+                            </div>
+                            <button
+                                className="button"
+                                onClick={() => setCategoryEditor({})}
+                            >
+                                <Plus /> Add category
+                            </button>
+                        </div>
+                        <div className="rule-list category-list">
+                            {(categories.data || []).map((category) => (
+                                <article
+                                    key={category.id}
+                                    className={
+                                        category.isArchived ? 'archived' : ''
+                                    }
+                                >
+                                    <span
+                                        className={
+                                            'category-badge category-' +
+                                            category.colorKey
+                                        }
+                                    >
+                                        {category.name.slice(0, 1)}
+                                    </span>
+                                    <span>
+                                        <strong>{category.name}</strong>
+                                        <small>
+                                            {category.kind}
+                                            {category.isSystem
+                                                ? ' · system'
+                                                : ''}
+                                        </small>
+                                    </span>
+                                    {category.isArchived && (
+                                        <Pill tone="warning">Archived</Pill>
+                                    )}
+                                    <span className="row-actions">
+                                        {!category.isSystem && (
+                                            <>
+                                                <button
+                                                    className="icon-button"
+                                                    onClick={() =>
+                                                        setCategoryEditor(
+                                                            category
+                                                        )
+                                                    }
+                                                    aria-label={
+                                                        'Edit ' + category.name
+                                                    }
+                                                >
+                                                    <Pencil />
+                                                </button>
+                                                <button
+                                                    className="icon-button"
+                                                    onClick={() =>
+                                                        saveCategory.mutate({
+                                                            id: category.id,
+                                                            body: {
+                                                                ...category,
+                                                                isArchived:
+                                                                    !category.isArchived,
+                                                            },
+                                                        })
+                                                    }
+                                                    disabled={
+                                                        saveCategory.isPending
+                                                    }
+                                                    aria-label={
+                                                        (category.isArchived
+                                                            ? 'Restore '
+                                                            : 'Archive ') +
+                                                        category.name
+                                                    }
+                                                >
+                                                    <Archive />
+                                                </button>
+                                                <button
+                                                    className="icon-button"
+                                                    onClick={() =>
+                                                        window.confirm(
+                                                            'Delete ' +
+                                                                category.name +
+                                                                '? This is only possible when nothing uses it.'
+                                                        ) &&
+                                                        deleteCategory.mutate(
+                                                            category.id
+                                                        )
+                                                    }
+                                                    disabled={
+                                                        deleteCategory.isPending
+                                                    }
+                                                    aria-label={
+                                                        'Delete ' +
+                                                        category.name
+                                                    }
+                                                >
+                                                    <Trash2 />
+                                                </button>
+                                            </>
+                                        )}
+                                    </span>
+                                </article>
+                            ))}
+                        </div>
+                        <InlineError>
+                            {(saveCategory.error || deleteCategory.error) &&
+                                apiError(
+                                    saveCategory.error || deleteCategory.error
+                                )}
+                        </InlineError>
+                    </Card>
+
+                    <Card>
+                        <div className="settings-card-heading">
+                            <div>
+                                <span className="settings-icon">
+                                    <Tags />
+                                </span>
+                                <span>
                                     <h2>Automatic categories</h2>
                                     <p>
                                         References Finova has learned when you
@@ -364,6 +525,12 @@ export default function SettingsPage() {
                                     </p>
                                 </span>
                             </div>
+                            <button
+                                className="button"
+                                onClick={() => setRuleEditor({})}
+                            >
+                                <Plus /> Add rule
+                            </button>
                         </div>
                         {(rules.data || []).length === 0 ? (
                             <p className="muted-copy">
@@ -389,14 +556,35 @@ export default function SettingsPage() {
                                                       : 'Money in or out with this reference'}
                                             </small>
                                         </span>
-                                        <Pill tone="info">
+                                        <Pill
+                                            tone={
+                                                rule.isActive
+                                                    ? 'info'
+                                                    : 'warning'
+                                            }
+                                        >
                                             {rule.categoryName}
+                                            {rule.isActive ? '' : ' · inactive'}
                                         </Pill>
+                                        <button
+                                            className="icon-button"
+                                            onClick={() => setRuleEditor(rule)}
+                                            aria-label={
+                                                'Edit automatic category for ' +
+                                                rule.referenceText
+                                            }
+                                        >
+                                            <Pencil />
+                                        </button>
                                         <button
                                             className="icon-button"
                                             disabled={deleteRule.isPending}
                                             onClick={() =>
-                                                deleteRule.mutate(rule.id)
+                                                window.confirm(
+                                                    'Forget automatic category for ' +
+                                                        rule.referenceText +
+                                                        '?'
+                                                ) && deleteRule.mutate(rule.id)
                                             }
                                             aria-label={
                                                 'Forget automatic category for ' +
@@ -465,6 +653,21 @@ export default function SettingsPage() {
                     open={Boolean(accountEditor)}
                     account={accountEditor?.id ? accountEditor : null}
                     onClose={() => setAccountEditor(false)}
+                />
+                <CategoryEditor
+                    open={Boolean(categoryEditor)}
+                    category={categoryEditor?.id ? categoryEditor : null}
+                    onClose={() => setCategoryEditor(false)}
+                    save={saveCategory}
+                />
+                <RuleEditor
+                    open={Boolean(ruleEditor)}
+                    rule={ruleEditor?.id ? ruleEditor : null}
+                    categories={(categories.data || []).filter(
+                        (category) => !category.isArchived
+                    )}
+                    onClose={() => setRuleEditor(false)}
+                    save={saveRule}
                 />
             </div>
         </PageState>
@@ -842,6 +1045,272 @@ function AccountEditor({ open, account, onClose }) {
                     </button>
                     <button className="button" disabled={save.isPending}>
                         {save.isPending ? 'Saving…' : 'Save account'}
+                    </button>
+                </div>
+            </form>
+        </Modal>
+    );
+}
+
+function CategoryEditor({ open, category, onClose, save }) {
+    const blank = useMemo(
+        () => ({
+            name: '',
+            kind: 'expense',
+            iconKey: 'tag',
+            colorKey: 'blue',
+            isArchived: false,
+        }),
+        []
+    );
+    const [form, setForm] = useState(blank);
+    useEffect(() => {
+        setForm(category ? { ...category } : blank);
+    }, [category, open, blank]);
+    const submit = async (event) => {
+        event.preventDefault();
+        try {
+            await save.mutateAsync(
+                category ? { id: category.id, body: form } : { body: form }
+            );
+            onClose();
+        } catch {
+            // Keep the modal open so the inline error remains visible.
+        }
+    };
+    return (
+        <Modal
+            open={open}
+            onClose={onClose}
+            title={category ? 'Edit category' : 'Add a category'}
+            copy="Categories keep transaction history meaningful and drive budgets."
+        >
+            <form className="form-grid" onSubmit={submit}>
+                <Field label="Name" className="span-2">
+                    <input
+                        required
+                        maxLength="120"
+                        value={form.name}
+                        onChange={(event) =>
+                            setForm({ ...form, name: event.target.value })
+                        }
+                    />
+                </Field>
+                <Field label="Kind">
+                    <select
+                        value={form.kind}
+                        onChange={(event) =>
+                            setForm({ ...form, kind: event.target.value })
+                        }
+                    >
+                        <option value="expense">Expense</option>
+                        <option value="income">Income</option>
+                        <option value="transfer">Transfer</option>
+                    </select>
+                </Field>
+                <Field label="Colour">
+                    <select
+                        value={form.colorKey}
+                        onChange={(event) =>
+                            setForm({ ...form, colorKey: event.target.value })
+                        }
+                    >
+                        {[
+                            'blue',
+                            'cyan',
+                            'mint',
+                            'violet',
+                            'coral',
+                            'amber',
+                            'rose',
+                            'slate',
+                        ].map((value) => (
+                            <option key={value} value={value}>
+                                {value[0].toUpperCase() + value.slice(1)}
+                            </option>
+                        ))}
+                    </select>
+                </Field>
+                <Field
+                    label="Icon key"
+                    className="span-2"
+                    hint="Use a short icon name such as tag, house, or receipt."
+                >
+                    <input
+                        required
+                        maxLength="40"
+                        value={form.iconKey}
+                        onChange={(event) =>
+                            setForm({ ...form, iconKey: event.target.value })
+                        }
+                    />
+                </Field>
+                {category && (
+                    <label className="check-row danger-check span-2">
+                        <input
+                            type="checkbox"
+                            checked={form.isArchived || false}
+                            onChange={(event) =>
+                                setForm({
+                                    ...form,
+                                    isArchived: event.target.checked,
+                                })
+                            }
+                        />
+                        <span>
+                            <strong>
+                                <Archive /> Archive category
+                            </strong>
+                            <small>
+                                Archived categories remain on history but cannot
+                                be newly selected.
+                            </small>
+                        </span>
+                    </label>
+                )}
+                <InlineError className="span-2">
+                    {save.error && apiError(save.error)}
+                </InlineError>
+                <div className="modal-actions span-2">
+                    <button
+                        type="button"
+                        className="button secondary"
+                        onClick={onClose}
+                    >
+                        Cancel
+                    </button>
+                    <button className="button" disabled={save.isPending}>
+                        {save.isPending ? 'Saving…' : 'Save category'}
+                    </button>
+                </div>
+            </form>
+        </Modal>
+    );
+}
+
+function RuleEditor({ open, rule, categories, onClose, save }) {
+    const blank = useMemo(
+        () => ({
+            matchText: '',
+            direction: 'out',
+            categoryId: '',
+            priority: 100,
+            isActive: true,
+        }),
+        []
+    );
+    const [form, setForm] = useState(blank);
+    useEffect(() => {
+        setForm(
+            rule ? { ...rule, categoryId: String(rule.categoryId) } : blank
+        );
+    }, [rule, open, blank]);
+    const submit = async (event) => {
+        event.preventDefault();
+        try {
+            const body = {
+                ...form,
+                categoryId: Number(form.categoryId),
+                priority: Number(form.priority),
+            };
+            await save.mutateAsync(rule ? { id: rule.id, body } : { body });
+            onClose();
+        } catch {
+            // Keep the modal open so the inline error remains visible.
+        }
+    };
+    return (
+        <Modal
+            open={open}
+            onClose={onClose}
+            title={
+                rule
+                    ? 'Edit automatic category rule'
+                    : 'Add an automatic category rule'
+            }
+            copy="Rules affect future imports only. Lower priority numbers run first when references overlap."
+        >
+            <form className="form-grid" onSubmit={submit}>
+                <Field label="Reference" className="span-2">
+                    <input
+                        required
+                        maxLength="200"
+                        value={form.matchText}
+                        onChange={(event) =>
+                            setForm({ ...form, matchText: event.target.value })
+                        }
+                        placeholder="Merchant or bank reference"
+                    />
+                </Field>
+                <Field label="Direction">
+                    <select
+                        value={form.direction}
+                        onChange={(event) =>
+                            setForm({ ...form, direction: event.target.value })
+                        }
+                    >
+                        <option value="out">Money out</option>
+                        <option value="in">Money in</option>
+                        <option value="any">Money in or out</option>
+                    </select>
+                </Field>
+                <Field label="Priority">
+                    <input
+                        required
+                        type="number"
+                        min="1"
+                        max="100000"
+                        value={form.priority}
+                        onChange={(event) =>
+                            setForm({ ...form, priority: event.target.value })
+                        }
+                    />
+                </Field>
+                <Field label="Category" className="span-2">
+                    <select
+                        required
+                        value={form.categoryId}
+                        onChange={(event) =>
+                            setForm({ ...form, categoryId: event.target.value })
+                        }
+                    >
+                        <option value="">Choose category</option>
+                        {categories.map((category) => (
+                            <option key={category.id} value={category.id}>
+                                {category.name}
+                            </option>
+                        ))}
+                    </select>
+                </Field>
+                <label className="check-row span-2">
+                    <input
+                        type="checkbox"
+                        checked={form.isActive}
+                        onChange={(event) =>
+                            setForm({ ...form, isActive: event.target.checked })
+                        }
+                    />
+                    <span>
+                        <strong>Rule active</strong>
+                        <small>
+                            Inactive rules remain saved but are ignored during
+                            imports.
+                        </small>
+                    </span>
+                </label>
+                <InlineError className="span-2">
+                    {save.error && apiError(save.error)}
+                </InlineError>
+                <div className="modal-actions span-2">
+                    <button
+                        type="button"
+                        className="button secondary"
+                        onClick={onClose}
+                    >
+                        Cancel
+                    </button>
+                    <button className="button" disabled={save.isPending}>
+                        {save.isPending ? 'Saving…' : 'Save rule'}
                     </button>
                 </div>
             </form>

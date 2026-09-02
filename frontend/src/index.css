@@ -3503,3 +3503,47 @@ kbd {
         display: none;
     }
 }
+
+.row-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+}
+
+.category-list article.archived {
+    opacity: 0.72;
+}
+
+.pair-candidate-list {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.pair-candidate {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    width: 100%;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--border);
+    border-radius: 0.8rem;
+    background: var(--surface);
+    color: var(--text);
+    text-align: left;
+}
+
+.pair-candidate:hover:not(:disabled),
+.pair-candidate:focus-visible {
+    border-color: var(--accent);
+}
+
+.pair-candidate span {
+    display: grid;
+    gap: 0.2rem;
+}
+
+.pair-candidate small {
+    color: var(--text-soft);
+}

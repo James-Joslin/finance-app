@@ -44,10 +44,10 @@ export const useAccounts = (includeArchived = false) =>
         queryKey: [...queryKeys.accounts, includeArchived],
         queryFn: () => get('/accounts', { includeArchived }),
     });
-export const useCategories = () =>
+export const useCategories = (includeArchived = false) =>
     useQuery({
-        queryKey: queryKeys.categories,
-        queryFn: () => get('/categories'),
+        queryKey: [...queryKeys.categories, includeArchived],
+        queryFn: () => get('/categories', { includeArchived }),
     });
 export const useTransactionRules = () =>
     useQuery({
@@ -85,6 +85,13 @@ export const useSafety = () =>
     useQuery({
         queryKey: queryKeys.safety,
         queryFn: () => get('/plan/safety'),
+    });
+export const useTransferCandidates = (transactionId) =>
+    useQuery({
+        queryKey: ['transfer-candidates', transactionId],
+        queryFn: () =>
+            get('/transactions/' + transactionId + '/transfer-candidates'),
+        enabled: Boolean(transactionId),
     });
 export const useTransactions = (params) =>
     useQuery({
@@ -143,7 +150,18 @@ export const mutations = {
     updateAccount: ({ id, body }) => put('/accounts/' + id, body),
     updateTransactionCategory: ({ id, categoryId, saveRule }) =>
         patch('/transactions/' + id + '/category', { categoryId, saveRule }),
+    createCategory: (body) => post('/categories', body),
+    updateCategory: ({ id, body }) => put('/categories/' + id, body),
+    deleteCategory: (id) => del('/categories/' + id),
+    createTransactionRule: (body) => post('/categories/rules', body),
+    updateTransactionRule: ({ id, body }) =>
+        put('/categories/rules/' + id, body),
     deleteTransactionRule: (id) => del('/categories/rules/' + id),
+    getTransferCandidates: (id) =>
+        get('/transactions/' + id + '/transfer-candidates'),
+    pairTransfer: ({ id, pairedTransactionId }) =>
+        post('/transactions/' + id + '/transfer-pair', { pairedTransactionId }),
+    unpairTransfer: (id) => del('/transactions/' + id + '/transfer-pair'),
     importTransactions: (form) =>
         post('/transactions/import', form, {
             headers: { 'Content-Type': 'multipart/form-data' },

@@ -251,37 +251,39 @@ public static class FinovaDataService
         return (await GetAccountsAsync(true)).Single(a => a.Id == id);
     }
 
-    public static async Task<IReadOnlyList<CategoryDto>> GetCategoriesAsync()
+    public static async Task<IReadOnlyList<CategoryDto>> GetCategoriesAsync(bool includeArchived = false)
     {
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
-        const string sql = "SELECT id, name, kind, icon_key, color_key, is_system FROM categories WHERE NOT is_archived ORDER BY kind, name";
+        const string sql = "SELECT id, name, kind, icon_key, color_key, is_system, is_archived FROM categories WHERE (@include_archived OR NOT is_archived) ORDER BY kind, name";
         await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("include_archived", includeArchived);
         await using var reader = await command.ExecuteReaderAsync();
         var rows = new List<CategoryDto>();
-        while (await reader.ReadAsync()) rows.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5)));
+        while (await reader.ReadAsync())
+            rows.Add(new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetBoolean(5), reader.GetBoolean(6)));
         return rows;
     }
 
     public static async Task<CategoryDto> CreateCategoryAsync(CreateCategoryRequest request)
     {
-        var name = request.Name?.Trim() ?? string.Empty;
-        var kind = request.Kind?.Trim().ToLowerInvariant() ?? string.Empty;
-        var icon = request.IconKey?.Trim() ?? string.Empty;
-        var color = request.ColorKey?.Trim() ?? string.Empty;
-        if (name.Length is < 1 or > 120) throw new ArgumentException("Category name must be between 1 and 120 characters.");
-        if (kind is not ("income" or "expense" or "transfer")) throw new ArgumentException("Category kind must be income, expense, or transfer.");
-        if (icon.Length is < 1 or > 40 || color.Length is < 1 or > 24) throw new ArgumentException("Category icon or colour is invalid.");
+        ValidateCategory(request.Name, request.Kind, request.IconKey, request.ColorKey);
+        var name = request.Name.Trim();
+        var kind = request.Kind.Trim().ToLowerInvariant();
+        var icon = request.IconKey.Trim();
+        var color = request.ColorKey.Trim();
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
         await using (var duplicate = new NpgsqlCommand("SELECT 1 FROM categories WHERE lower(name)=lower(@name)", connection))
         {
             duplicate.Parameters.AddWithValue("name", name);
-            if (await duplicate.ExecuteScalarAsync() is not null) throw new ResourceConflictException("A category with that name already exists.");
+            if (await duplicate.ExecuteScalarAsync() is not null)
+                throw new ResourceConflictException("A category with that name already exists.");
         }
         const string sql = """
             INSERT INTO categories (name, kind, icon_key, color_key) VALUES (@name, @kind, @icon, @color)
-            RETURNING id, name, kind, icon_key, color_key, is_system
+            RETURNING id, name, kind, icon_key, color_key, is_system, is_archived
             """;
         await using var command = new NpgsqlCommand(sql, connection);
         command.Parameters.AddWithValue("name", name);
@@ -292,12 +294,104 @@ public static class FinovaDataService
         {
             await using var reader = await command.ExecuteReaderAsync();
             await reader.ReadAsync();
-            return new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3), reader.GetString(4), reader.GetBoolean(5));
+            return new(reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetString(3),
+                reader.GetString(4), reader.GetBoolean(5), reader.GetBoolean(6));
         }
         catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.UniqueViolation)
         {
             throw new ResourceConflictException("A category with that name already exists.");
         }
+    }
+
+    public static async Task<CategoryDto> UpdateCategoryAsync(int id, UpdateCategoryRequest request)
+    {
+        ValidateCategory(request.Name, request.Kind, request.IconKey, request.ColorKey);
+        var name = request.Name.Trim();
+        var kind = request.Kind.Trim().ToLowerInvariant();
+        var icon = request.IconKey.Trim();
+        var color = request.ColorKey.Trim();
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            await using (var existing = new NpgsqlCommand("SELECT is_system FROM categories WHERE id=@id FOR UPDATE", connection, transaction))
+            {
+                existing.Parameters.AddWithValue("id", id);
+                var system = await existing.ExecuteScalarAsync();
+                if (system is null) throw new ResourceNotFoundException("Category was not found.");
+                if ((bool)system) throw new ArgumentException("System categories cannot be edited or archived.");
+            }
+            await using (var duplicate = new NpgsqlCommand("SELECT 1 FROM categories WHERE lower(name)=lower(@name) AND id<>@id", connection, transaction))
+            {
+                duplicate.Parameters.AddWithValue("id", id);
+                duplicate.Parameters.AddWithValue("name", name);
+                if (await duplicate.ExecuteScalarAsync() is not null)
+                    throw new ResourceConflictException("A category with that name already exists.");
+            }
+            await using (var update = new NpgsqlCommand("""
+                UPDATE categories SET name=@name, kind=@kind, icon_key=@icon, color_key=@color, is_archived=@archived
+                WHERE id=@id
+                """, connection, transaction))
+            {
+                update.Parameters.AddWithValue("id", id);
+                update.Parameters.AddWithValue("name", name);
+                update.Parameters.AddWithValue("kind", kind);
+                update.Parameters.AddWithValue("icon", icon);
+                update.Parameters.AddWithValue("color", color);
+                update.Parameters.AddWithValue("archived", request.IsArchived);
+                await update.ExecuteNonQueryAsync();
+            }
+            await using (var sync = new NpgsqlCommand("""
+                UPDATE transactions t SET is_transfer = EXISTS (
+                    SELECT 1 FROM categories c WHERE c.id=t.category_id AND c.kind='transfer'
+                ) OR EXISTS (
+                    SELECT 1 FROM transaction_transfer_pairs p
+                    WHERE p.transaction_id_a=t.id OR p.transaction_id_b=t.id
+                ) WHERE t.category_id=@id
+                """, connection, transaction))
+            {
+                sync.Parameters.AddWithValue("id", id);
+                await sync.ExecuteNonQueryAsync();
+            }
+            if (request.IsArchived)
+            {
+                await using var deactivate = new NpgsqlCommand(
+                    "UPDATE transaction_rules SET is_active=false, updated_at=CURRENT_TIMESTAMP WHERE category_id=@id",
+                    connection, transaction);
+                deactivate.Parameters.AddWithValue("id", id);
+                await deactivate.ExecuteNonQueryAsync();
+            }
+        });
+        return (await GetCategoriesAsync(true)).Single(category => category.Id == id);
+    }
+
+    public static async Task<bool> DeleteCategoryAsync(int id)
+    {
+        var deleted = false;
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            await using (var existing = new NpgsqlCommand("SELECT is_system FROM categories WHERE id=@id FOR UPDATE", connection, transaction))
+            {
+                existing.Parameters.AddWithValue("id", id);
+                var system = await existing.ExecuteScalarAsync();
+                if (system is null) return;
+                if ((bool)system) throw new ArgumentException("System categories cannot be deleted.");
+            }
+            const string referencesSql = """
+                SELECT (SELECT count(*) FROM transactions WHERE category_id=@id)
+                     + (SELECT count(*) FROM transaction_rules WHERE category_id=@id)
+                     + (SELECT count(*) FROM budget_definitions WHERE category_id=@id)
+                     + (SELECT count(*) FROM recurring_items WHERE category_id=@id)
+                """;
+            await using (var references = new NpgsqlCommand(referencesSql, connection, transaction))
+            {
+                references.Parameters.AddWithValue("id", id);
+                if (Convert.ToInt64(await references.ExecuteScalarAsync()) > 0)
+                    throw new ResourceConflictException("This category is still used by transactions or planning rules. Archive it instead.");
+            }
+            await using var delete = new NpgsqlCommand("DELETE FROM categories WHERE id=@id", connection, transaction);
+            delete.Parameters.AddWithValue("id", id);
+            deleted = await delete.ExecuteNonQueryAsync() > 0;
+        });
+        return deleted;
     }
 
     public static async Task<IReadOnlyList<TransactionRuleDto>> GetTransactionRulesAsync()
@@ -307,7 +401,7 @@ public static class FinovaDataService
         const string sql = """
             SELECT r.id, r.match_text, r.direction, r.category_id, c.name, r.priority, r.is_active
             FROM transaction_rules r JOIN categories c ON c.id = r.category_id
-            ORDER BY r.match_text, r.direction
+            ORDER BY r.priority, r.match_text, r.direction
             """;
         await using var command = new NpgsqlCommand(sql, connection);
         await using var reader = await command.ExecuteReaderAsync();
@@ -317,8 +411,287 @@ public static class FinovaDataService
         return rows;
     }
 
+    public static async Task<TransactionRuleDto> SaveTransactionRuleAsync(int? id, SaveTransactionRuleRequest request)
+    {
+        var matchText = request.MatchText?.Trim() ?? string.Empty;
+        var direction = request.Direction?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (matchText.Length is < 1 or > 200) throw new ArgumentException("Rule reference must be between 1 and 200 characters.");
+        if (direction is not ("in" or "out" or "any")) throw new ArgumentException("Rule direction must be in, out, or any.");
+        if (request.Priority < 1 || request.Priority > 100000) throw new ArgumentException("Rule priority must be between 1 and 100000.");
+        int savedId = 0;
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            await using (var category = new NpgsqlCommand("SELECT 1 FROM categories WHERE id=@id AND NOT is_archived", connection, transaction))
+            {
+                category.Parameters.AddWithValue("id", request.CategoryId);
+                if (await category.ExecuteScalarAsync() is null) throw new ArgumentException("An active category is required for a rule.");
+            }
+            if (id.HasValue)
+            {
+                await using var existing = new NpgsqlCommand("SELECT 1 FROM transaction_rules WHERE id=@id", connection, transaction);
+                existing.Parameters.AddWithValue("id", id.Value);
+                if (await existing.ExecuteScalarAsync() is null) throw new ResourceNotFoundException("Rule was not found.");
+                await using var duplicate = new NpgsqlCommand("SELECT id FROM transaction_rules WHERE lower(trim(match_text))=lower(trim(@match)) AND direction=@direction AND id<>@id", connection, transaction);
+                duplicate.Parameters.AddWithValue("id", id.Value);
+                duplicate.Parameters.AddWithValue("match", matchText);
+                duplicate.Parameters.AddWithValue("direction", direction);
+                if (await duplicate.ExecuteScalarAsync() is not null) throw new ResourceConflictException("A rule with that reference and direction already exists.");
+                savedId = id.Value;
+                await using var update = new NpgsqlCommand("""
+                    UPDATE transaction_rules SET match_text=@match, direction=@direction, category_id=@category,
+                        priority=@priority, is_active=@active, updated_at=CURRENT_TIMESTAMP WHERE id=@id
+                    """, connection, transaction);
+                update.Parameters.AddWithValue("id", savedId);
+                update.Parameters.AddWithValue("match", matchText);
+                update.Parameters.AddWithValue("direction", direction);
+                update.Parameters.AddWithValue("category", request.CategoryId);
+                update.Parameters.AddWithValue("priority", request.Priority);
+                update.Parameters.AddWithValue("active", request.IsActive);
+                await update.ExecuteNonQueryAsync();
+            }
+            else
+            {
+                await using var duplicate = new NpgsqlCommand("SELECT id FROM transaction_rules WHERE lower(trim(match_text))=lower(trim(@match)) AND direction=@direction", connection, transaction);
+                duplicate.Parameters.AddWithValue("match", matchText);
+                duplicate.Parameters.AddWithValue("direction", direction);
+                var existingId = await duplicate.ExecuteScalarAsync();
+                if (existingId is not null) savedId = Convert.ToInt32(existingId);
+                if (existingId is not null)
+                {
+                    await using var update = new NpgsqlCommand("""
+                        UPDATE transaction_rules SET category_id=@category, priority=@priority, is_active=@active,
+                            updated_at=CURRENT_TIMESTAMP WHERE id=@id
+                        """, connection, transaction);
+                    update.Parameters.AddWithValue("id", savedId);
+                    update.Parameters.AddWithValue("category", request.CategoryId);
+                    update.Parameters.AddWithValue("priority", request.Priority);
+                    update.Parameters.AddWithValue("active", request.IsActive);
+                    await update.ExecuteNonQueryAsync();
+                }
+                else
+                {
+                    await using var insert = new NpgsqlCommand("""
+                        INSERT INTO transaction_rules (match_text, direction, category_id, priority, is_active)
+                        VALUES (@match, @direction, @category, @priority, @active) RETURNING id
+                        """, connection, transaction);
+                    insert.Parameters.AddWithValue("match", matchText);
+                    insert.Parameters.AddWithValue("direction", direction);
+                    insert.Parameters.AddWithValue("category", request.CategoryId);
+                    insert.Parameters.AddWithValue("priority", request.Priority);
+                    insert.Parameters.AddWithValue("active", request.IsActive);
+                    savedId = Convert.ToInt32(await insert.ExecuteScalarAsync());
+                }
+            }
+        });
+        return (await GetTransactionRulesAsync()).Single(rule => rule.Id == savedId);
+    }
+
     public static async Task<bool> DeleteTransactionRuleAsync(int id) =>
         await PostgreSqlQuerier.ExecuteNonQueryAsync("DELETE FROM transaction_rules WHERE id = @id", new() { ["id"] = id }) > 0;
+
+    public static async Task<IReadOnlyList<TransferCandidateDto>> GetTransferCandidatesAsync(int transactionId)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sourceSql = "SELECT account_id, transaction_date, amount FROM transactions WHERE id=@id";
+        int accountId;
+        DateOnly date;
+        decimal amount;
+        await using (var source = new NpgsqlCommand(sourceSql, connection))
+        {
+            source.Parameters.AddWithValue("id", transactionId);
+            await using var reader = await source.ExecuteReaderAsync();
+            if (!await reader.ReadAsync()) throw new ResourceNotFoundException("Transaction was not found.");
+            accountId = reader.GetInt32(0);
+            date = DateOnly.FromDateTime(reader.GetDateTime(1));
+            amount = reader.GetDecimal(2);
+        }
+        const string sql = """
+            SELECT t.id, t.account_id, a.name, t.transaction_date, t.amount, t.payee, t.memo
+            FROM transactions t JOIN accounts a ON a.id=t.account_id
+            WHERE t.account_id<>@account AND NOT a.is_archived
+              AND t.amount=-@amount
+              AND NOT EXISTS (SELECT 1 FROM transaction_transfer_pairs p WHERE p.transaction_id_a=t.id OR p.transaction_id_b=t.id)
+            ORDER BY abs(t.transaction_date::date-@date::date), t.id
+            LIMIT 50
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("account", accountId);
+        command.Parameters.AddWithValue("amount", amount);
+        command.Parameters.AddWithValue("date", date.ToDateTime(TimeOnly.MinValue));
+        await using var result = await command.ExecuteReaderAsync();
+        var rows = new List<TransferCandidateDto>();
+        while (await result.ReadAsync())
+            rows.Add(new(result.GetInt32(0), result.GetInt32(1), result.GetString(2),
+                DateOnly.FromDateTime(result.GetDateTime(3)), result.GetDecimal(4),
+                result.IsDBNull(5) ? null : result.GetString(5), result.IsDBNull(6) ? null : result.GetString(6)));
+        return rows;
+    }
+
+    public static async Task<TransferPairDto> PairTransferAsync(int transactionId, int pairedTransactionId)
+    {
+        if (transactionId == pairedTransactionId) throw new ArgumentException("A transaction cannot be paired with itself.");
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            const string sql = "SELECT id, account_id, transaction_date, amount FROM transactions WHERE id = ANY(@ids) FOR UPDATE";
+            await using var command = new NpgsqlCommand(sql, connection, transaction);
+            command.Parameters.AddWithValue("ids", new[] { transactionId, pairedTransactionId });
+            var rows = new List<TransferTransactionRow>();
+            await using (var reader = await command.ExecuteReaderAsync())
+            {
+                while (await reader.ReadAsync())
+                    rows.Add(new(reader.GetInt32(0), reader.GetInt32(1), DateOnly.FromDateTime(reader.GetDateTime(2)), reader.GetDecimal(3)));
+            }
+            if (rows.Count != 2) throw new ResourceNotFoundException("One or both transactions were not found.");
+            var first = rows.Single(row => row.Id == transactionId);
+            var second = rows.Single(row => row.Id == pairedTransactionId);
+            ValidateTransferPair(first, second);
+            await EnsureUnpairedAsync(connection, transaction, transactionId);
+            await EnsureUnpairedAsync(connection, transaction, pairedTransactionId);
+            await InsertTransferPairAsync(connection, transaction, transactionId, pairedTransactionId);
+            await SetTransferFlagAsync(connection, transaction, transactionId, true);
+            await SetTransferFlagAsync(connection, transaction, pairedTransactionId, true);
+        });
+        return await GetTransferPairAsync(transactionId);
+    }
+
+    public static async Task UnpairTransferAsync(int transactionId)
+    {
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            int pairId;
+            int firstId;
+            int secondId;
+            await using (var find = new NpgsqlCommand("SELECT id, transaction_id_a, transaction_id_b FROM transaction_transfer_pairs WHERE transaction_id_a=@id OR transaction_id_b=@id FOR UPDATE", connection, transaction))
+            {
+                find.Parameters.AddWithValue("id", transactionId);
+                await using var reader = await find.ExecuteReaderAsync();
+                if (!await reader.ReadAsync()) throw new ResourceNotFoundException("Transaction is not paired.");
+                pairId = reader.GetInt32(0);
+                firstId = reader.GetInt32(1);
+                secondId = reader.GetInt32(2);
+            }
+            await using (var delete = new NpgsqlCommand("DELETE FROM transaction_transfer_pairs WHERE id=@pair", connection, transaction))
+            {
+                delete.Parameters.AddWithValue("pair", pairId);
+                await delete.ExecuteNonQueryAsync();
+            }
+            await SetTransferFlagAsync(connection, transaction, firstId, false);
+            await SetTransferFlagAsync(connection, transaction, secondId, false);
+        });
+    }
+
+    public static async Task<TransferPairDto> GetTransferPairAsync(int transactionId)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT p.id, @id,
+                CASE WHEN p.transaction_id_a=@id THEN p.transaction_id_b ELSE p.transaction_id_a END,
+                t.account_id, a.name, t.transaction_date, t.amount, t.payee, t.memo
+            FROM transaction_transfer_pairs p
+            JOIN transactions t ON t.id=CASE WHEN p.transaction_id_a=@id THEN p.transaction_id_b ELSE p.transaction_id_a END
+            JOIN accounts a ON a.id=t.account_id
+            WHERE p.transaction_id_a=@id OR p.transaction_id_b=@id
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("id", transactionId);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync()) throw new ResourceNotFoundException("Transaction is not paired.");
+        return new(reader.GetInt32(0), reader.GetInt32(1), reader.GetInt32(2), reader.GetInt32(3), reader.GetString(4),
+            DateOnly.FromDateTime(reader.GetDateTime(5)), reader.GetDecimal(6), reader.IsDBNull(7) ? null : reader.GetString(7),
+            reader.IsDBNull(8) ? null : reader.GetString(8));
+    }
+
+    public static async Task AutoPairImportedTransfersAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, IReadOnlyList<int> importedIds)
+    {
+        foreach (var importedId in importedIds)
+        {
+            const string sourceSql = """
+                SELECT account_id, transaction_date::date, amount,
+                    regexp_replace(lower(coalesce(nullif(trim(payee), ''), memo)), '[^a-z0-9]+', '', 'g')
+                FROM transactions WHERE id=@id
+                """;
+            int accountId;
+            DateOnly date;
+            decimal amount;
+            string sourceReference;
+            await using (var source = new NpgsqlCommand(sourceSql, connection, transaction))
+            {
+                source.Parameters.AddWithValue("id", importedId);
+                await using var reader = await source.ExecuteReaderAsync();
+                if (!await reader.ReadAsync()) continue;
+                accountId = reader.GetInt32(0);
+                date = DateOnly.FromDateTime(reader.GetDateTime(1));
+                amount = reader.GetDecimal(2);
+                sourceReference = reader.IsDBNull(3) ? string.Empty : reader.GetString(3);
+            }
+            if (amount == 0 || sourceReference.Length == 0) continue;
+            const string candidateSql = """
+                SELECT t.id
+                FROM transactions t
+                WHERE t.account_id<>@account AND t.transaction_date::date=@date::date AND t.amount=-@amount
+                  AND NOT EXISTS (SELECT 1 FROM transaction_transfer_pairs p WHERE p.transaction_id_a=t.id OR p.transaction_id_b=t.id)
+                  AND regexp_replace(lower(coalesce(nullif(trim(t.payee), ''), t.memo)), '[^a-z0-9]+', '', 'g') <> ''
+                  AND (
+                    regexp_replace(lower(coalesce(nullif(trim(t.payee), ''), t.memo)), '[^a-z0-9]+', '', 'g') = @reference
+                    OR regexp_replace(lower(coalesce(nullif(trim(t.payee), ''), t.memo)), '[^a-z0-9]+', '', 'g') LIKE '%' || @reference || '%'
+                    OR @reference LIKE '%' || regexp_replace(lower(coalesce(nullif(trim(t.payee), ''), t.memo)), '[^a-z0-9]+', '', 'g') || '%'
+                  )
+                ORDER BY t.id
+                LIMIT 1
+                """;
+            int? candidateId = null;
+            await using (var candidate = new NpgsqlCommand(candidateSql, connection, transaction))
+            {
+                candidate.Parameters.AddWithValue("account", accountId);
+                candidate.Parameters.AddWithValue("date", date.ToDateTime(TimeOnly.MinValue));
+                candidate.Parameters.AddWithValue("amount", amount);
+                candidate.Parameters.AddWithValue("reference", sourceReference);
+                candidateId = (int?)await candidate.ExecuteScalarAsync();
+            }
+            if (!candidateId.HasValue) continue;
+            await InsertTransferPairAsync(connection, transaction, importedId, candidateId.Value);
+            await SetTransferFlagAsync(connection, transaction, importedId, true);
+            await SetTransferFlagAsync(connection, transaction, candidateId.Value, true);
+        }
+    }
+
+    private static async Task EnsureUnpairedAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int transactionId)
+    {
+        await using var command = new NpgsqlCommand("SELECT 1 FROM transaction_transfer_pairs WHERE transaction_id_a=@id OR transaction_id_b=@id", connection, transaction);
+        command.Parameters.AddWithValue("id", transactionId);
+        if (await command.ExecuteScalarAsync() is not null) throw new ResourceConflictException("One of these transactions is already paired.");
+    }
+
+    private static async Task InsertTransferPairAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int firstId, int secondId)
+    {
+        await using var command = new NpgsqlCommand("INSERT INTO transaction_transfer_pairs (transaction_id_a, transaction_id_b) VALUES (@a,@b)", connection, transaction);
+        command.Parameters.AddWithValue("a", Math.Min(firstId, secondId));
+        command.Parameters.AddWithValue("b", Math.Max(firstId, secondId));
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task SetTransferFlagAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int transactionId, bool paired)
+    {
+        await using var command = new NpgsqlCommand("""
+            UPDATE transactions t SET is_transfer = @paired OR EXISTS (
+                SELECT 1 FROM categories c WHERE c.id=t.category_id AND c.kind='transfer'
+            ) OR EXISTS (
+                SELECT 1 FROM transaction_transfer_pairs p WHERE p.transaction_id_a=t.id OR p.transaction_id_b=t.id
+            ) WHERE t.id=@id
+            """, connection, transaction);
+        command.Parameters.AddWithValue("id", transactionId);
+        command.Parameters.AddWithValue("paired", paired);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static void ValidateTransferPair(TransferTransactionRow first, TransferTransactionRow second)
+    {
+        if (first.AccountId == second.AccountId) throw new ArgumentException("Transfers must belong to different accounts.");
+        if (first.Amount == 0 || first.Amount != -second.Amount) throw new ArgumentException("Transfers must have equal and opposite amounts.");
+    }
 
     public static async Task<IReadOnlyList<TransactionTypeCodeDto>> GetTransactionTypeCodesAsync()
     {
@@ -362,7 +735,14 @@ public static class FinovaDataService
             SELECT tx.id, tx.account_id, a.name, a.account_type, tx.transaction_date, tx.amount, tx.payee, tx.memo,
                 tx.transaction_type, tc.meaning, tx.category_id, coalesce(c.name, 'Uncategorised'), tx.status, tx.is_transfer,
                 tx.source_file_type, tx.running_balance,
-                (SELECT ro.recurring_item_id FROM recurring_occurrences ro WHERE ro.transaction_id = tx.id LIMIT 1)
+                (SELECT ro.recurring_item_id FROM recurring_occurrences ro WHERE ro.transaction_id = tx.id LIMIT 1),
+                (SELECT p.id FROM transaction_transfer_pairs p WHERE p.transaction_id_a=tx.id OR p.transaction_id_b=tx.id LIMIT 1),
+                (SELECT CASE WHEN p.transaction_id_a=tx.id THEN p.transaction_id_b ELSE p.transaction_id_a END
+                    FROM transaction_transfer_pairs p WHERE p.transaction_id_a=tx.id OR p.transaction_id_b=tx.id LIMIT 1),
+                (SELECT a2.name FROM transaction_transfer_pairs p
+                    JOIN transactions t2 ON t2.id=CASE WHEN p.transaction_id_a=tx.id THEN p.transaction_id_b ELSE p.transaction_id_a END
+                    JOIN accounts a2 ON a2.id=t2.account_id
+                    WHERE p.transaction_id_a=tx.id OR p.transaction_id_b=tx.id LIMIT 1)
             FROM tx JOIN accounts a ON a.id = tx.account_id
             LEFT JOIN categories c ON c.id = tx.category_id
             LEFT JOIN transaction_type_codes tc ON tc.code = upper(tx.transaction_type) AND tc.is_active
@@ -400,8 +780,9 @@ public static class FinovaDataService
                 if (await category.ExecuteScalarAsync() is null) throw new ArgumentException("Category was not found.");
             }
             const string updateSql = """
-                UPDATE transactions SET category_id = @category,
+                UPDATE transactions t SET category_id = @category,
                     is_transfer = EXISTS (SELECT 1 FROM categories WHERE id = @category AND kind = 'transfer')
+                        OR EXISTS (SELECT 1 FROM transaction_transfer_pairs p WHERE p.transaction_id_a=t.id OR p.transaction_id_b=t.id)
                 WHERE id = @id
                 """;
             await using var update = new NpgsqlCommand(updateSql, connection, transaction);
@@ -1282,7 +1663,8 @@ public static class FinovaDataService
         reader.IsDBNull(8) ? null : reader.GetString(8), reader.IsDBNull(9) ? null : reader.GetString(9),
         reader.IsDBNull(10) ? null : reader.GetInt32(10), reader.GetString(11), reader.GetString(12), reader.GetBoolean(13),
         reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetDecimal(15),
-        reader.IsDBNull(16) ? null : reader.GetInt32(16));
+        reader.IsDBNull(16) ? null : reader.GetInt32(16), reader.IsDBNull(17) ? null : reader.GetInt32(17),
+        reader.IsDBNull(18) ? null : reader.GetInt32(18), reader.IsDBNull(19) ? null : reader.GetString(19));
 
     private static RecurringItemDto ReadRecurring(NpgsqlDataReader reader) => new(
         reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), reader.GetString(4),
@@ -1355,6 +1737,16 @@ public static class FinovaDataService
         _ => null,
     };
 
+    private static void ValidateCategory(string name, string kind, string icon, string color)
+    {
+        if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 120)
+            throw new ArgumentException("Category name must be between 1 and 120 characters.");
+        if (string.IsNullOrWhiteSpace(kind) || kind.Trim().ToLowerInvariant() is not ("income" or "expense" or "transfer"))
+            throw new ArgumentException("Category kind must be income, expense, or transfer.");
+        if (string.IsNullOrWhiteSpace(icon) || icon.Trim().Length > 40 || string.IsNullOrWhiteSpace(color) || color.Trim().Length > 24)
+            throw new ArgumentException("Category icon or colour is invalid.");
+    }
+
     private static void ValidateAccount(string type, decimal safeZone, string name, bool isShared, string? primaryHolder, string? secondaryHolder, decimal? creditLimit)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Trim().Length > 160) throw new ArgumentException("Account name must be between 1 and 160 characters.");
@@ -1394,6 +1786,7 @@ public static class FinovaDataService
         return null;
     }
 
+    private sealed record TransferTransactionRow(int Id, int AccountId, DateOnly Date, decimal Amount);
     private sealed record GoalRow(int Id, string Name, string? Description, decimal TargetAmount, DateOnly? TargetDate,
         int AccountId, string AccountName, int Priority, string IconKey, string ColorKey, int? ImageId, string Status);
     private sealed record PatternRow(int AccountId, string AccountName, string Name, DateOnly Date, decimal Amount);
