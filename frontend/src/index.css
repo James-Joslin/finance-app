@@ -1408,8 +1408,8 @@ kbd {
     min-height: 62px;
     display: grid;
     grid-template-columns:
-        36px minmax(0, 1fr) minmax(8rem, max-content)
-        max-content;
+        36px minmax(0, 1fr) minmax(9.5rem, max-content)
+        minmax(6.5rem, max-content);
     gap: 0.75rem;
     align-items: center;
     border-bottom: 1px solid var(--border);
@@ -1432,7 +1432,7 @@ kbd {
     white-space: nowrap;
 }
 .recurring-row > span:nth-child(3) {
-    min-width: 8rem;
+    min-width: 9.5rem;
     align-items: flex-end;
     white-space: nowrap;
 }
@@ -1448,7 +1448,8 @@ kbd {
     align-items: center;
     justify-content: flex-end;
     gap: 0.4rem;
-    min-width: max-content;
+    min-width: 6.5rem;
+    padding-inline-start: 0.75rem;
     white-space: nowrap;
 }
 .recurring-actions .pill {
