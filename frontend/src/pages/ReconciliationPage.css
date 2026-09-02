@@ -1,0 +1,252 @@
+.reconciliation-page .page-toolbar > div:first-child h2 {
+    margin: 0.2rem 0 0;
+}
+
+.reconciliation-page .page-toolbar > .field {
+    min-width: 15rem;
+    margin: 0;
+}
+
+.reconciliation-layout {
+    display: grid;
+    grid-template-columns: minmax(15rem, 22rem) minmax(0, 1fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.reconciliation-layout main,
+.reconciliation-workspace {
+    display: grid;
+    gap: 1rem;
+}
+
+.reconciliation-history .card,
+.reconciliation-summary-card,
+.reconciliation-transactions-card,
+.reconciliation-actions-card,
+.reconciliation-new-session {
+    padding: 1.25rem;
+}
+
+.reconciliation-section-heading {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+.reconciliation-section-heading h2 {
+    margin: 0.2rem 0 0;
+}
+
+.reconciliation-section-heading > svg {
+    color: var(--brand);
+}
+
+.reconciliation-new-button {
+    width: 100%;
+    justify-content: center;
+    margin: 1rem 0;
+}
+
+.reconciliation-session-list {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.reconciliation-session-item {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    background: transparent;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.reconciliation-session-item:hover,
+.reconciliation-session-item.active {
+    border-color: var(--brand);
+    background: var(--surface-muted);
+}
+
+.reconciliation-session-item span {
+    display: grid;
+    gap: 0.2rem;
+    min-width: 0;
+}
+
+.reconciliation-session-item small,
+.reconciliation-table small,
+.reconciliation-check-row small {
+    display: block;
+    color: var(--text-muted);
+}
+
+.reconciliation-session-item .pill,
+.reconciliation-section-heading .pill {
+    flex: 0 0 auto;
+}
+
+.reconciliation-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin: 1.25rem 0;
+}
+
+.reconciliation-metric {
+    padding: 0.9rem;
+    border-radius: 0.75rem;
+    background: var(--surface-muted);
+}
+
+.reconciliation-metric span,
+.reconciliation-metric strong {
+    display: block;
+}
+
+.reconciliation-metric span {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.reconciliation-metric strong {
+    margin-top: 0.25rem;
+    font-size: 1.15rem;
+}
+
+.reconciliation-metric.success strong,
+.reconciliation-check-row.matches,
+.reconciliation-closed-note {
+    color: var(--mint);
+}
+
+.reconciliation-metric.danger strong,
+.reconciliation-check-row.mismatch,
+.reconciliation-close-reason {
+    color: var(--danger);
+}
+
+.reconciliation-checks {
+    display: grid;
+    gap: 0.5rem;
+}
+
+.reconciliation-check-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.75rem 0;
+    border-top: 1px solid var(--border);
+}
+
+.reconciliation-check-row svg,
+.reconciliation-close-reason svg,
+.reconciliation-closed-note svg {
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+}
+
+.reconciliation-check-row span {
+    min-width: 0;
+}
+
+.reconciliation-check-row b {
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.reconciliation-form {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1.25rem;
+}
+
+.reconciliation-form .inline-error,
+.reconciliation-form .modal-actions {
+    grid-column: 1 / -1;
+}
+
+.reconciliation-table input[type='checkbox'] {
+    width: 1.1rem;
+    height: 1.1rem;
+    accent-color: var(--brand);
+}
+
+.reconciliation-table .adjustment-row {
+    background: var(--surface-muted);
+}
+
+.reconciliation-action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.reconciliation-actions-card h2 {
+    margin: 0.2rem 0;
+}
+
+.reconciliation-closed-note,
+.reconciliation-close-reason {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 1rem 0 0;
+}
+
+.reconciliation-empty {
+    display: grid;
+    justify-items: center;
+    gap: 0.5rem;
+    padding: 3rem 1rem;
+    text-align: center;
+}
+
+.reconciliation-empty svg {
+    width: 2rem;
+    height: 2rem;
+    color: var(--brand);
+}
+
+@media (max-width: 900px) {
+    .reconciliation-layout,
+    .reconciliation-metric-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .reconciliation-history {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 620px) {
+    .reconciliation-layout,
+    .reconciliation-metric-grid,
+    .reconciliation-form {
+        grid-template-columns: 1fr;
+    }
+
+    .reconciliation-history {
+        grid-column: auto;
+    }
+
+    .reconciliation-check-row {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .reconciliation-check-row b {
+        grid-column: 2;
+    }
+}

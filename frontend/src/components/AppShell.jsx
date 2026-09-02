@@ -11,6 +11,7 @@ import {
     Moon,
     PiggyBank,
     ReceiptText,
+    Scale,
     Search,
     Settings,
     Sun,
@@ -31,6 +32,7 @@ import { setFormatPreferences } from '../lib/format';
 const navigation = [
     { to: '/', label: 'Overview', icon: LayoutDashboard },
     { to: '/transactions', label: 'Transactions', icon: ReceiptText },
+    { to: '/reconciliation', label: 'Reconciliation', icon: Scale },
     { to: '/plan', label: 'Plan', icon: CalendarRange },
     { to: '/goals', label: 'Goals', icon: PiggyBank },
     { to: '/insights', label: 'Insights', icon: ChartNoAxesCombined },
@@ -39,6 +41,10 @@ const navigation = [
 const titles = {
     '/': ['Overview', 'A clear view of your household money.'],
     '/transactions': ['Transactions', 'Review, organise and import activity.'],
+    '/reconciliation': [
+        'Reconciliation',
+        'Verify statements and clear account activity.',
+    ],
     '/plan': ['Plan', 'Protect today and prepare for what is next.'],
     '/goals': ['Savings goals', 'Turn plans into visible progress.'],
     '/insights': ['Insights', 'Understand the patterns behind your money.'],
