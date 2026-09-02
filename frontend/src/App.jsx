@@ -12,6 +12,7 @@ const OverviewPage = lazy(() => import('./pages/OverviewPage'));
 const PlanPage = lazy(() => import('./pages/PlanPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const TransactionsPage = lazy(() => import('./pages/TransactionsPage'));
+const ReconciliationPage = lazy(() => import('./pages/ReconciliationPage'));
 
 function PageFallback() {
     return (
@@ -49,6 +50,10 @@ export default function App() {
                 <Route element={<AppShell />}>
                     <Route index element={<OverviewPage />} />
                     <Route path="transactions" element={<TransactionsPage />} />
+                    <Route
+                        path="reconciliation"
+                        element={<ReconciliationPage />}
+                    />
                     <Route path="plan" element={<PlanPage />} />
                     <Route path="goals" element={<GoalsPage />} />
                     <Route path="insights" element={<InsightsPage />} />
