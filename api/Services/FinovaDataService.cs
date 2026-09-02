@@ -1745,7 +1745,7 @@ public static class FinovaDataService
                 SELECT months.month,
                     coalesce(bm.base_amount, @current_amount),
                     coalesce(bm.rollover_enabled, @current_rollover),
-                    coalesce(sum(CASE WHEN t.amount < 0 AND NOT t.is_transfer AND NOT a.is_archived
+                    coalesce(sum(CASE WHEN t.amount < 0 AND NOT t.is_transfer AND NOT t.is_reconciliation_adjustment AND NOT a.is_archived
                         THEN coalesce(posting.amount, 0) ELSE 0 END), 0)
                 FROM generate_series(@effective::date, @month::date, interval '1 month') AS months(month)
                 LEFT JOIN budget_months bm ON bm.budget_id=@budget AND bm.month=months.month::date
@@ -1885,7 +1885,7 @@ public static class FinovaDataService
         await connection.OpenAsync();
         const string transactionSql = """
             SELECT t.transaction_date::date, t.amount, t.category_id, coalesce(c.name, 'Uncategorised'),
-                coalesce(c.color_key, 'slate'), t.is_transfer, coalesce(t.transaction_type, ''), a.account_type,
+                coalesce(c.color_key, 'slate'), t.is_transfer, coalesce(t.transaction_type, ''), a.account_type, t.is_reconciliation_adjustment,
                 EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id)
             FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id
             WHERE NOT a.is_archived AND t.transaction_date <= @end ORDER BY t.transaction_date, t.id
@@ -1914,7 +1914,7 @@ public static class FinovaDataService
                     continue;
                 }
                 daily[date] = balance;
-                if (reader.GetBoolean(5) || reader.GetString(6) == "Initial Deposit") continue;
+                if (reader.GetBoolean(5) || reader.GetString(6) == "Initial Deposit" || reader.GetBoolean(8)) continue;
                 var isCredit = reader.GetString(7) == "credit";
                 if (amount > 0 && !isCredit) { income += amount; incomeDaily[date] = incomeDaily.GetValueOrDefault(date) + amount; }
                 else if (amount < 0)
@@ -1922,7 +1922,7 @@ public static class FinovaDataService
                     var spent = Math.Abs(amount);
                     spending += spent;
                     spendingDaily[date] = spendingDaily.GetValueOrDefault(date) + spent;
-                    if (reader.GetBoolean(8)) continue;
+                    if (reader.GetBoolean(9)) continue;
                     int? categoryId = reader.IsDBNull(2) ? null : reader.GetInt32(2);
                     var key = (categoryId, reader.GetString(3), reader.GetString(4));
                     category[key] = category.GetValueOrDefault(key) + spent;
@@ -1937,6 +1937,7 @@ public static class FinovaDataService
             JOIN transaction_splits s ON s.transaction_id=t.id
             JOIN categories c ON c.id=s.category_id
             WHERE NOT a.is_archived AND t.amount < 0 AND NOT t.is_transfer
+                AND NOT t.is_reconciliation_adjustment
                 AND t.transaction_date >= @start AND t.transaction_date <= @end
             ORDER BY t.transaction_date, t.id, s.line_order
             """;

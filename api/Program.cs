@@ -64,6 +64,7 @@ app.UseExceptionHandler(exceptionHandlerApp =>
             KeyNotFoundException => StatusCodes.Status404NotFound,
             ResourceNotFoundException => StatusCodes.Status404NotFound,
             ResourceConflictException => StatusCodes.Status409Conflict,
+            Npgsql.PostgresException { SqlState: "23001" } => StatusCodes.Status409Conflict,
             _ => StatusCodes.Status500InternalServerError,
         };
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Finova.ExceptionHandler");
@@ -77,6 +78,7 @@ app.UseExceptionHandler(exceptionHandlerApp =>
             error = exception is ArgumentException or InvalidDataException or NotSupportedException
                 or ImportBatchConflictException or ImportBatchExpiredException
                 or KeyNotFoundException or ResourceNotFoundException or ResourceConflictException
+                or Npgsql.PostgresException { SqlState: "23001" }
                 ? exception.Message
                 : "Finova could not complete that request.",
             traceId = context.TraceIdentifier,
