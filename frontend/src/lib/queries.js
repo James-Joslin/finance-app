@@ -12,6 +12,7 @@ export const queryKeys = {
     goals: ['goals'],
     recurring: ['recurring'],
     suggestions: ['recurring-suggestions'],
+    transaction: (id) => ['transaction', id],
     occurrences: ['recurring-occurrences'],
     budgets: ['budgets'],
     safety: ['safety'],
@@ -98,6 +99,12 @@ export const useTransactions = (params) =>
         queryKey: queryKeys.transactions(params),
         queryFn: () => get('/transactions', params),
         placeholderData: (previous) => previous,
+export const useTransaction = (id) =>
+    useQuery({
+        queryKey: queryKeys.transaction(id),
+        queryFn: () => get('/transactions/' + id),
+        enabled: Boolean(id),
+    });
     });
 export const useInsights = (params) =>
     useQuery({
@@ -138,6 +145,9 @@ export const useFinovaMutation = (
                 typeof successMessage === 'function'
                     ? successMessage(data, variables)
                     : successMessage;
+    createTransaction: (body) => post('/transactions', body),
+    updateTransaction: ({ id, body }) => put('/transactions/' + id, body),
+    deleteTransaction: (id) => del('/transactions/' + id),
             if (message) notifySuccess(message);
         },
     });

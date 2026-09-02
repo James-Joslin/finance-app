@@ -6,6 +6,7 @@ import {
     Download,
     FileUp,
     Filter,
+    Pencil,
     History,
     Link2,
     Unlink,
@@ -15,6 +16,7 @@ import {
     WalletCards,
 } from 'lucide-react';
 import RecurringEditor from '../components/RecurringEditor';
+import TransactionEditor from '../components/TransactionEditor';
 import {
     Card,
     Field,
@@ -52,6 +54,8 @@ export default function TransactionsPage() {
     const [importOpen, setImportOpen] = useState(false);
     const [recurringTransaction, setRecurringTransaction] = useState(null);
     const [pairTransaction, setPairTransaction] = useState(null);
+    const [transactionEditorOpen, setTransactionEditorOpen] = useState(false);
+    const [editingTransaction, setEditingTransaction] = useState(null);
     const accounts = useAccounts();
     const categories = useCategories();
 
@@ -105,6 +109,15 @@ export default function TransactionsPage() {
                     ))}
                 </div>
                 <div className="toolbar-actions">
+                    <button
+                        className="button"
+                        onClick={() => {
+                            setEditingTransaction(null);
+                            setTransactionEditorOpen(true);
+                        }}
+                    >
+                        <Pencil /> Add transaction
+                    </button>
                     <button
                         className={
                             'button secondary ' + (hasFilters ? 'active' : '')
@@ -230,6 +243,7 @@ export default function TransactionsPage() {
                         categories={categories.data || []}
                         onMarkRecurring={setRecurringTransaction}
                         onPair={setPairTransaction}
+                        onEdit={(item) => { setEditingTransaction(item); setTransactionEditorOpen(true); }}
                     />
                     <Pagination
                         page={page}
@@ -256,11 +270,18 @@ export default function TransactionsPage() {
                 transaction={pairTransaction}
                 onClose={() => setPairTransaction(null)}
             />
+            <TransactionEditor
+                open={transactionEditorOpen}
+                transaction={editingTransaction}
+                onClose={() => { setTransactionEditorOpen(false); setEditingTransaction(null); }}
+                accounts={accounts.data || []}
+                categories={categories.data || []}
+            />
         </div>
     );
 }
 
-function TransactionTable({ items, categories, onMarkRecurring, onPair }) {
+function TransactionTable({ items, categories, onMarkRecurring, onPair, onEdit }) {
     const updateCategory = useFinovaMutation(
         mutations.updateTransactionCategory,
         [
@@ -337,33 +358,39 @@ function TransactionTable({ items, categories, onMarkRecurring, onPair }) {
                                     </div>
                                 </td>
                                 <td>
-                                    <select
-                                        className="table-select"
-                                        disabled={updateCategory.isPending}
-                                        title="Choose whether this applies once or to future matching imports."
-                                        aria-label={
-                                            'Category for ' +
-                                            (item.payee ||
-                                                item.memo ||
-                                                'transaction')
-                                        }
-                                        value={item.categoryId || ''}
-                                        onChange={(event) =>
-                                            changeCategory(
-                                                item,
-                                                Number(event.target.value)
-                                            )
-                                        }
-                                    >
-                                        {categories.map((category) => (
-                                            <option
-                                                key={category.id}
-                                                value={category.id}
-                                            >
-                                                {category.name}
-                                            </option>
-                                        ))}
-                                    </select>
+                                    {item.isSplit ? (
+                                        <span className="split-label">
+                                            Split · {item.splitCount} categories
+                                        </span>
+                                    ) : (
+                                        <select
+                                            className="table-select"
+                                            disabled={updateCategory.isPending}
+                                            title="Choose whether this applies once or to future matching imports."
+                                            aria-label={
+                                                'Category for ' +
+                                                (item.payee ||
+                                                    item.memo ||
+                                                    'transaction')
+                                            }
+                                            value={item.categoryId || ''}
+                                            onChange={(event) =>
+                                                changeCategory(
+                                                    item,
+                                                    Number(event.target.value)
+                                                )
+                                            }
+                                        >
+                                            {categories.map((category) => (
+                                                <option
+                                                    key={category.id}
+                                                    value={category.id}
+                                                >
+                                                    {category.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
                                 </td>
                                 <td>{item.accountName}</td>
                                 <td>
@@ -451,6 +478,16 @@ function TransactionTable({ items, categories, onMarkRecurring, onPair }) {
                                             <CalendarClock />
                                         </button>
                                     )}
+                                    {item.isEditable && (
+                                        <button
+                                            className="icon-button"
+                                            onClick={() => onEdit(item)}
+                                            aria-label="Edit manual transaction"
+                                            title="Edit manual transaction"
+                                        >
+                                            <Pencil />
+                                        </button>
+                                    )}
                                 </td>
                             </tr>
                         ))}
@@ -489,6 +526,16 @@ function TransactionTable({ items, categories, onMarkRecurring, onPair }) {
                                 {isIncomeTransaction(item) ? '+' : ''}
                                 {money(item.amount)}
                             </strong>
+                            {item.isEditable && (
+                                <button
+                                    className="icon-button"
+                                    onClick={() => onEdit(item)}
+                                    aria-label="Edit manual transaction"
+                                    title="Edit manual transaction"
+                                >
+                                    <Pencil />
+                                </button>
+                            )}
                             {item.pairedTransactionId ? (
                                 <button
                                     className="icon-button"
