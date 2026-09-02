@@ -1743,7 +1743,7 @@ public static class FinovaDataService
                     coalesce(bm.base_amount, @current_amount),
                     coalesce(bm.rollover_enabled, @current_rollover),
                     coalesce(sum(CASE WHEN t.amount < 0 AND NOT t.is_transfer AND NOT a.is_archived
-                        THEN coalesce(posting.amount, abs(t.amount)) ELSE 0 END), 0)
+                        THEN coalesce(posting.amount, 0) ELSE 0 END), 0)
                 FROM generate_series(@effective::date, @month::date, interval '1 month') AS months(month)
                 LEFT JOIN budget_months bm ON bm.budget_id=@budget AND bm.month=months.month::date
                 LEFT JOIN transactions t ON t.transaction_date >= months.month
