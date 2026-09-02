@@ -12,6 +12,7 @@ export const queryKeys = {
     goals: ['goals'],
     recurring: ['recurring'],
     suggestions: ['recurring-suggestions'],
+    transaction: (id) => ['transaction', id],
     occurrences: ['recurring-occurrences'],
     budgets: ['budgets'],
     safety: ['safety'],
@@ -99,6 +100,12 @@ export const useTransactions = (params) =>
         queryFn: () => get('/transactions', params),
         placeholderData: (previous) => previous,
     });
+export const useTransaction = (id) =>
+    useQuery({
+        queryKey: queryKeys.transaction(id),
+        queryFn: () => get('/transactions/' + id),
+        enabled: Boolean(id),
+    });
 export const useInsights = (params) =>
     useQuery({
         queryKey: queryKeys.insights(params),
@@ -148,6 +155,9 @@ export const mutations = {
     saveSettings: (body) => put('/settings', body),
     createAccount: (body) => post('/accounts', body),
     updateAccount: ({ id, body }) => put('/accounts/' + id, body),
+    createTransaction: (body) => post('/transactions', body),
+    updateTransaction: ({ id, body }) => put('/transactions/' + id, body),
+    deleteTransaction: (id) => del('/transactions/' + id),
     updateTransactionCategory: ({ id, categoryId, saveRule }) =>
         patch('/transactions/' + id + '/category', { categoryId, saveRule }),
     createCategory: (body) => post('/categories', body),

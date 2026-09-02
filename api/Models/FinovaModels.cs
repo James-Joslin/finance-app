@@ -125,8 +125,38 @@ public sealed record TransactionDtoV2(
     int? RecurringItemId,
     int? TransferPairId,
     int? PairedTransactionId,
-    string? PairedAccountName);
+    string? PairedAccountName,
+    bool IsManual,
+    bool IsEditable,
+    bool IsSplit,
+    int SplitCount);
 
+public sealed record TransactionSplitDto(
+    int Id,
+    int CategoryId,
+    string CategoryName,
+    decimal Amount,
+    string? Memo,
+    int LineOrder);
+
+public sealed record SaveTransactionSplitRequest(
+    int CategoryId,
+    decimal Amount,
+    string? Memo = null);
+
+public sealed record SaveManualTransactionRequest(
+    DateOnly Date,
+    int AccountId,
+    string Direction,
+    decimal Amount,
+    string? Payee,
+    string? Memo,
+    int? CategoryId,
+    IReadOnlyList<SaveTransactionSplitRequest>? Splits = null);
+
+public sealed record TransactionDetailDto(
+    TransactionDtoV2 Transaction,
+    IReadOnlyList<TransactionSplitDto> Splits);
 public sealed record TransactionPageDto(
     IReadOnlyList<TransactionDtoV2> Items,
     int Page,

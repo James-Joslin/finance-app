@@ -378,6 +378,7 @@ public static class FinovaDataService
             const string referencesSql = """
                 SELECT (SELECT count(*) FROM transactions WHERE category_id=@id)
                      + (SELECT count(*) FROM transaction_rules WHERE category_id=@id)
+                     + (SELECT count(*) FROM transaction_splits WHERE category_id=@id)
                      + (SELECT count(*) FROM budget_definitions WHERE category_id=@id)
                      + (SELECT count(*) FROM recurring_items WHERE category_id=@id)
                 """;
@@ -693,6 +694,310 @@ public static class FinovaDataService
         if (first.Amount == 0 || first.Amount != -second.Amount) throw new ArgumentException("Transfers must have equal and opposite amounts.");
     }
 
+    public static async Task<TransactionDetailDto> CreateManualTransactionAsync(SaveManualTransactionRequest request)
+    {
+        var signedAmount = ValidateManualTransactionRequest(request);
+        var splits = request.Splits ?? Array.Empty<SaveTransactionSplitRequest>();
+        var transactionId = 0;
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            await EnsureManualAccountAsync(connection, transaction, request.AccountId);
+            await ValidateManualCategoriesAsync(connection, transaction, request.Direction, request.CategoryId, splits);
+
+            const string insertSql = """
+                INSERT INTO transactions (
+                    account_id, transaction_date, amount, payee, memo, transaction_type,
+                    source_file_type, category_id, status, is_transfer
+                )
+                VALUES (@account, @date, @amount, @payee, @memo, 'Manual', 'MANUAL', @category, 'completed', false)
+                RETURNING id
+                """;
+            await using var insert = new NpgsqlCommand(insertSql, connection, transaction);
+            insert.Parameters.AddWithValue("account", request.AccountId);
+            insert.Parameters.AddWithValue("date", request.Date.ToDateTime(TimeOnly.MinValue));
+            insert.Parameters.AddWithValue("amount", signedAmount);
+            AddNullable(insert, "payee", CleanManualText(request.Payee, 200));
+            AddNullable(insert, "memo", CleanManualText(request.Memo, 500));
+            AddNullable(insert, "category", splits.Count == 0 ? request.CategoryId : null);
+            transactionId = Convert.ToInt32(await insert.ExecuteScalarAsync());
+            await InsertTransactionSplitsAsync(connection, transaction, transactionId, splits);
+        });
+        return await GetTransactionDetailsAsync(transactionId);
+    }
+
+    public static async Task<TransactionDetailDto> UpdateManualTransactionAsync(int id, SaveManualTransactionRequest request)
+    {
+        var signedAmount = ValidateManualTransactionRequest(request);
+        var splits = request.Splits ?? Array.Empty<SaveTransactionSplitRequest>();
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            int existingAccountId;
+            decimal existingAmount;
+            string? sourceFileType;
+            string? fitId;
+            long? importBatchId;
+            bool isPaired;
+            bool hasRecurringOccurrence;
+            await using (var existing = new NpgsqlCommand("""
+                SELECT account_id, amount, source_file_type, fitid, import_batch_id,
+                    EXISTS (SELECT 1 FROM transaction_transfer_pairs p
+                        WHERE p.transaction_id_a=t.id OR p.transaction_id_b=t.id),
+                    EXISTS (SELECT 1 FROM recurring_occurrences ro WHERE ro.transaction_id=t.id)
+                FROM transactions t WHERE t.id=@id FOR UPDATE
+                """, connection, transaction))
+            {
+                existing.Parameters.AddWithValue("id", id);
+                await using var reader = await existing.ExecuteReaderAsync();
+                if (!await reader.ReadAsync()) throw new ResourceNotFoundException("Transaction was not found.");
+                existingAccountId = reader.GetInt32(0);
+                existingAmount = reader.GetDecimal(1);
+                sourceFileType = reader.IsDBNull(2) ? null : reader.GetString(2);
+                fitId = reader.IsDBNull(3) ? null : reader.GetString(3);
+                importBatchId = reader.IsDBNull(4) ? null : reader.GetInt64(4);
+                isPaired = reader.GetBoolean(5);
+                hasRecurringOccurrence = reader.GetBoolean(6);
+            }
+            EnsureEditableManualTransaction(sourceFileType, fitId, importBatchId);
+            if (isPaired && (request.AccountId != existingAccountId || signedAmount != existingAmount))
+                throw new ResourceConflictException("Unpair this transfer before changing its account or amount.");
+            if (isPaired && splits.Count > 0)
+                throw new ResourceConflictException("Paired transfers cannot be split.");
+            if (hasRecurringOccurrence && request.AccountId != existingAccountId)
+                throw new ResourceConflictException("A recurring-linked transaction cannot be moved to another account.");
+
+            await EnsureManualAccountAsync(connection, transaction, request.AccountId);
+            await ValidateManualCategoriesAsync(connection, transaction, request.Direction, request.CategoryId, splits);
+
+            const string updateSql = """
+                UPDATE transactions SET account_id=@account, transaction_date=@date, amount=@amount,
+                    payee=@payee, memo=@memo, transaction_type='Manual', source_file_type='MANUAL',
+                    category_id=@category, is_transfer=EXISTS (
+                        SELECT 1 FROM transaction_transfer_pairs p
+                        WHERE p.transaction_id_a=transactions.id OR p.transaction_id_b=transactions.id
+                    )
+                WHERE id=@id
+                """;
+            await using (var update = new NpgsqlCommand(updateSql, connection, transaction))
+            {
+                update.Parameters.AddWithValue("id", id);
+                update.Parameters.AddWithValue("account", request.AccountId);
+                update.Parameters.AddWithValue("date", request.Date.ToDateTime(TimeOnly.MinValue));
+                update.Parameters.AddWithValue("amount", signedAmount);
+                AddNullable(update, "payee", CleanManualText(request.Payee, 200));
+                AddNullable(update, "memo", CleanManualText(request.Memo, 500));
+                AddNullable(update, "category", splits.Count == 0 ? request.CategoryId : null);
+                await update.ExecuteNonQueryAsync();
+            }
+
+            await using (var deleteSplits = new NpgsqlCommand(
+                "DELETE FROM transaction_splits WHERE transaction_id=@transaction", connection, transaction))
+            {
+                deleteSplits.Parameters.AddWithValue("transaction", id);
+                await deleteSplits.ExecuteNonQueryAsync();
+            }
+            await InsertTransactionSplitsAsync(connection, transaction, id, splits);
+
+            if (hasRecurringOccurrence)
+            {
+                await using var occurrence = new NpgsqlCommand("""
+                    UPDATE recurring_occurrences SET actual_amount=abs(@amount), updated_at=CURRENT_TIMESTAMP
+                    WHERE transaction_id=@transaction AND status IN ('matched', 'paid')
+                    """, connection, transaction);
+                occurrence.Parameters.AddWithValue("amount", signedAmount);
+                occurrence.Parameters.AddWithValue("transaction", id);
+                await occurrence.ExecuteNonQueryAsync();
+            }
+        });
+        return await GetTransactionDetailsAsync(id);
+    }
+
+    public static async Task DeleteManualTransactionAsync(int id)
+    {
+        await PostgreSqlQuerier.ExecuteTransactionAsync(async (connection, transaction) =>
+        {
+            string? sourceFileType;
+            string? fitId;
+            long? importBatchId;
+            int? pairedId = null;
+            await using (var existing = new NpgsqlCommand("""
+                SELECT t.source_file_type, t.fitid, t.import_batch_id
+                FROM transactions t WHERE t.id=@id FOR UPDATE
+                """, connection, transaction))
+            {
+                existing.Parameters.AddWithValue("id", id);
+                await using var reader = await existing.ExecuteReaderAsync();
+                if (!await reader.ReadAsync()) throw new ResourceNotFoundException("Transaction was not found.");
+                sourceFileType = reader.IsDBNull(0) ? null : reader.GetString(0);
+                fitId = reader.IsDBNull(1) ? null : reader.GetString(1);
+                importBatchId = reader.IsDBNull(2) ? null : reader.GetInt64(2);
+            }
+            await using var paired = new NpgsqlCommand("""
+                SELECT CASE WHEN transaction_id_a=@id THEN transaction_id_b ELSE transaction_id_a END
+                FROM transaction_transfer_pairs
+                WHERE transaction_id_a=@id OR transaction_id_b=@id LIMIT 1
+                """, connection, transaction);
+            paired.Parameters.AddWithValue("id", id);
+            var pairValue = await paired.ExecuteScalarAsync();
+            pairedId = pairValue is null or DBNull ? null : Convert.ToInt32(pairValue);
+            EnsureEditableManualTransaction(sourceFileType, fitId, importBatchId);
+
+            await using (var resetOccurrence = new NpgsqlCommand("""
+                UPDATE recurring_occurrences SET status='expected', transaction_id=NULL,
+                    actual_amount=NULL, matched_at=NULL, updated_at=CURRENT_TIMESTAMP
+                WHERE transaction_id=@transaction
+                """, connection, transaction))
+            {
+                resetOccurrence.Parameters.AddWithValue("transaction", id);
+                await resetOccurrence.ExecuteNonQueryAsync();
+            }
+
+            await using (var delete = new NpgsqlCommand("DELETE FROM transactions WHERE id=@id", connection, transaction))
+            {
+                delete.Parameters.AddWithValue("id", id);
+                await delete.ExecuteNonQueryAsync();
+            }
+
+            if (pairedId.HasValue)
+            {
+                await using var reconcile = new NpgsqlCommand("""
+                    UPDATE transactions t SET is_transfer =
+                        EXISTS (SELECT 1 FROM categories c WHERE c.id=t.category_id AND c.kind='transfer')
+                        OR EXISTS (SELECT 1 FROM transaction_transfer_pairs p
+                            WHERE p.transaction_id_a=t.id OR p.transaction_id_b=t.id)
+                    WHERE t.id=@id
+                    """, connection, transaction);
+                reconcile.Parameters.AddWithValue("id", pairedId.Value);
+                await reconcile.ExecuteNonQueryAsync();
+            }
+        });
+    }
+
+    public static async Task<TransactionDetailDto> GetTransactionDetailsAsync(int id)
+    {
+        int accountId;
+        await using (var connection = PostgreSqlQuerier.BuildConnection())
+        {
+            await connection.OpenAsync();
+            await using var command = new NpgsqlCommand(
+                "SELECT account_id FROM transactions WHERE id=@id", connection);
+            command.Parameters.AddWithValue("id", id);
+            var value = await command.ExecuteScalarAsync();
+            if (value is null) throw new ResourceNotFoundException("Transaction was not found.");
+            accountId = Convert.ToInt32(value);
+        }
+
+        var page = await GetTransactionsAsync(accountId, null, null, "all", null, null, 1, 10000);
+        var item = page.Items.SingleOrDefault(transaction => transaction.Id == id);
+        if (item is null) throw new ResourceNotFoundException("Transaction was not found.");
+        var splits = await GetTransactionSplitsAsync(id);
+        return new(item, splits);
+    }
+
+    private static async Task<IReadOnlyList<TransactionSplitDto>> GetTransactionSplitsAsync(int transactionId)
+    {
+        await using var connection = PostgreSqlQuerier.BuildConnection();
+        await connection.OpenAsync();
+        const string sql = """
+            SELECT s.id, s.category_id, c.name, s.amount, s.memo, s.line_order
+            FROM transaction_splits s JOIN categories c ON c.id=s.category_id
+            WHERE s.transaction_id=@transaction ORDER BY s.line_order, s.id
+            """;
+        await using var command = new NpgsqlCommand(sql, connection);
+        command.Parameters.AddWithValue("transaction", transactionId);
+        await using var reader = await command.ExecuteReaderAsync();
+        var rows = new List<TransactionSplitDto>();
+        while (await reader.ReadAsync())
+            rows.Add(new(reader.GetInt32(0), reader.GetInt32(1), reader.GetString(2),
+                reader.GetDecimal(3), reader.IsDBNull(4) ? null : reader.GetString(4), reader.GetInt16(5)));
+        return rows;
+    }
+
+    private static async Task InsertTransactionSplitsAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, int transactionId,
+        IReadOnlyList<SaveTransactionSplitRequest> splits)
+    {
+        for (var index = 0; index < splits.Count; index++)
+        {
+            var split = splits[index];
+            await using var command = new NpgsqlCommand("""
+                INSERT INTO transaction_splits (transaction_id, category_id, amount, memo, line_order)
+                VALUES (@transaction, @category, @amount, @memo, @line_order)
+                """, connection, transaction);
+            command.Parameters.AddWithValue("transaction", transactionId);
+            command.Parameters.AddWithValue("category", split.CategoryId);
+            command.Parameters.AddWithValue("amount", decimal.Round(split.Amount, 2));
+            AddNullable(command, "memo", CleanManualText(split.Memo, 500));
+            command.Parameters.AddWithValue("line_order", index);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    private static async Task EnsureManualAccountAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, int accountId)
+    {
+        await using var command = new NpgsqlCommand(
+            "SELECT 1 FROM accounts WHERE id=@id AND NOT is_archived", connection, transaction);
+        command.Parameters.AddWithValue("id", accountId);
+        if (await command.ExecuteScalarAsync() is null)
+            throw new ArgumentException("The selected account was not found or is archived.");
+    }
+
+    private static async Task ValidateManualCategoriesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string direction,
+        int? categoryId, IReadOnlyList<SaveTransactionSplitRequest> splits)
+    {
+        var kind = direction.Trim().ToLowerInvariant() == "income" ? "income" : "expense";
+        var ids = splits.Count == 0
+            ? categoryId.HasValue ? new[] { categoryId.Value } : Array.Empty<int>()
+            : splits.Select(split => split.CategoryId).Distinct().ToArray();
+        if (ids.Length == 0) throw new ArgumentException("Choose a category or add split lines.");
+        await using var command = new NpgsqlCommand(
+            "SELECT id, kind FROM categories WHERE id = ANY(@ids) AND NOT is_archived", connection, transaction);
+        command.Parameters.AddWithValue("ids", ids);
+        var found = new Dictionary<int, string>();
+        await using (var reader = await command.ExecuteReaderAsync())
+        {
+            while (await reader.ReadAsync()) found[reader.GetInt32(0)] = reader.GetString(1);
+        }
+        if (found.Count != ids.Length || found.Values.Any(value => value == "transfer") ||
+            found.Values.Any(value => value != kind))
+            throw new ArgumentException($"Choose active {kind} categories; transfer categories are not valid for manual transactions.");
+        if (splits.Count > 0 && categoryId.HasValue)
+            throw new ArgumentException("A split transaction cannot also have a parent category.");
+    }
+
+    private static decimal ValidateManualTransactionRequest(SaveManualTransactionRequest request)
+    {
+        var direction = request.Direction?.Trim().ToLowerInvariant();
+        if (direction is not ("income" or "expense"))
+            throw new ArgumentException("Transaction direction must be income or expense.");
+        if (request.Amount <= 0 || request.Amount != decimal.Round(request.Amount, 2))
+            throw new ArgumentException("Transaction amount must be positive and have no more than two decimal places.");
+        if (request.Amount > 9999999999.99m)
+            throw new ArgumentException("Transaction amount is too large.");
+        var splits = request.Splits ?? Array.Empty<SaveTransactionSplitRequest>();
+        if (splits.Count == 1 || splits.Count > 50)
+            throw new ArgumentException("A split transaction must contain between 2 and 50 lines.");
+        if (splits.Any(split => split.Amount <= 0 || split.Amount != decimal.Round(split.Amount, 2)))
+            throw new ArgumentException("Split amounts must be positive and have no more than two decimal places.");
+        if (splits.Count > 0 && decimal.Round(splits.Sum(split => split.Amount), 2) != request.Amount)
+            throw new ArgumentException("Split amounts must add up exactly to the transaction amount.");
+        return direction == "income" ? request.Amount : -request.Amount;
+    }
+
+    private static void EnsureEditableManualTransaction(string? sourceFileType, string? fitId, long? importBatchId)
+    {
+        if (!string.Equals(sourceFileType, "MANUAL", StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrWhiteSpace(fitId) || importBatchId.HasValue)
+            throw new ResourceConflictException("Only user-created manual transactions can be edited or deleted.");
+    }
+
+    private static string? CleanManualText(string? value, int maxLength) =>
+        string.IsNullOrWhiteSpace(value) ? null :
+        value.Trim().Length > maxLength
+            ? throw new ArgumentException($"Transaction text must be no longer than {maxLength} characters.")
+            : value.Trim();
+
     public static async Task<IReadOnlyList<TransactionTypeCodeDto>> GetTransactionTypeCodesAsync()
     {
         await using var connection = PostgreSqlQuerier.BuildConnection();
@@ -705,6 +1010,9 @@ public static class FinovaDataService
         return rows;
     }
 
+    private static void AddNullable(NpgsqlCommand command, string name, object? value) =>
+        command.Parameters.AddWithValue(name, value ?? DBNull.Value);
+
     public static async Task<TransactionPageDto> GetTransactionsAsync(
         int? accountId, int? categoryId, string? search, string type, DateOnly? startDate, DateOnly? endDate, int page, int pageSize)
     {
@@ -715,7 +1023,7 @@ public static class FinovaDataService
         pageSize = Math.Clamp(pageSize, 1, 10000);
         var filters = new List<string> { "NOT a.is_archived" };
         if (accountId.HasValue) filters.Add("tx.account_id = @account_id");
-        if (categoryId.HasValue) filters.Add("tx.category_id = @category_id");
+        if (categoryId.HasValue) filters.Add("(tx.category_id = @category_id OR EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=tx.id AND s.category_id=@category_id))");
         if (!string.IsNullOrWhiteSpace(search)) filters.Add("(tx.payee ILIKE @search OR tx.memo ILIKE @search OR a.name ILIKE @search)");
         if (type == "income") filters.Add("tx.amount > 0 AND a.account_type <> 'credit' AND NOT tx.is_transfer");
         if (type == "spending") filters.Add("tx.amount < 0 AND NOT tx.is_transfer");
@@ -733,7 +1041,7 @@ public static class FinovaDataService
         var dataSql = $"""
             {cte}
             SELECT tx.id, tx.account_id, a.name, a.account_type, tx.transaction_date, tx.amount, tx.payee, tx.memo,
-                tx.transaction_type, tc.meaning, tx.category_id, coalesce(c.name, 'Uncategorised'), tx.status, tx.is_transfer,
+                tx.transaction_type, tc.meaning, tx.category_id, CASE WHEN EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=tx.id) THEN 'Split transaction' ELSE coalesce(c.name, 'Uncategorised') END, tx.status, tx.is_transfer,
                 tx.source_file_type, tx.running_balance,
                 (SELECT ro.recurring_item_id FROM recurring_occurrences ro WHERE ro.transaction_id = tx.id LIMIT 1),
                 (SELECT p.id FROM transaction_transfer_pairs p WHERE p.transaction_id_a=tx.id OR p.transaction_id_b=tx.id LIMIT 1),
@@ -742,7 +1050,11 @@ public static class FinovaDataService
                 (SELECT a2.name FROM transaction_transfer_pairs p
                     JOIN transactions t2 ON t2.id=CASE WHEN p.transaction_id_a=tx.id THEN p.transaction_id_b ELSE p.transaction_id_a END
                     JOIN accounts a2 ON a2.id=t2.account_id
-                    WHERE p.transaction_id_a=tx.id OR p.transaction_id_b=tx.id LIMIT 1)
+                    WHERE p.transaction_id_a=tx.id OR p.transaction_id_b=tx.id LIMIT 1),
+                coalesce(tx.source_file_type = 'MANUAL', false) AS is_manual,
+                coalesce(tx.source_file_type = 'MANUAL' AND tx.fitid IS NULL AND tx.import_batch_id IS NULL, false) AS is_editable,
+                (SELECT count(*) FROM transaction_splits s WHERE s.transaction_id=tx.id)::int AS split_count,
+                EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=tx.id) AS is_split
             FROM tx JOIN accounts a ON a.id = tx.account_id
             LEFT JOIN categories c ON c.id = tx.category_id
             LEFT JOIN transaction_type_codes tc ON tc.code = upper(tx.transaction_type) AND tc.is_active
@@ -778,6 +1090,13 @@ public static class FinovaDataService
             {
                 category.Parameters.AddWithValue("id", request.CategoryId);
                 if (await category.ExecuteScalarAsync() is null) throw new ArgumentException("Category was not found.");
+            }
+            await using (var split = new NpgsqlCommand(
+                "SELECT 1 FROM transaction_splits WHERE transaction_id=@transaction LIMIT 1", connection, transaction))
+            {
+                split.Parameters.AddWithValue("transaction", id);
+                if (await split.ExecuteScalarAsync() is not null)
+                    throw new ResourceConflictException("Split transactions must be edited through the transaction editor.");
             }
             const string updateSql = """
                 UPDATE transactions t SET category_id = @category,
@@ -1426,12 +1745,20 @@ public static class FinovaDataService
                 SELECT months.month,
                     coalesce(bm.base_amount, @current_amount),
                     coalesce(bm.rollover_enabled, @current_rollover),
-                    coalesce(sum(CASE WHEN t.amount < 0 AND NOT t.is_transfer AND NOT a.is_archived THEN abs(t.amount) ELSE 0 END), 0)
+                    coalesce(sum(CASE WHEN t.amount < 0 AND NOT t.is_transfer AND NOT a.is_archived
+                        THEN coalesce(posting.amount, 0) ELSE 0 END), 0)
                 FROM generate_series(@effective::date, @month::date, interval '1 month') AS months(month)
                 LEFT JOIN budget_months bm ON bm.budget_id=@budget AND bm.month=months.month::date
-                LEFT JOIN transactions t ON t.category_id=@category
-                    AND t.transaction_date >= months.month AND t.transaction_date < months.month + interval '1 month'
+                LEFT JOIN transactions t ON t.transaction_date >= months.month
+                    AND t.transaction_date < months.month + interval '1 month'
                 LEFT JOIN accounts a ON a.id=t.account_id
+                LEFT JOIN LATERAL (
+                    SELECT s.category_id, s.amount
+                    FROM transaction_splits s WHERE s.transaction_id=t.id
+                    UNION ALL
+                    SELECT t.category_id, abs(t.amount)
+                    WHERE NOT EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id)
+                ) posting ON posting.category_id=@category
                 GROUP BY months.month, bm.base_amount, bm.rollover_enabled
                 ORDER BY months.month
                 """;
@@ -1558,7 +1885,8 @@ public static class FinovaDataService
         await connection.OpenAsync();
         const string transactionSql = """
             SELECT t.transaction_date::date, t.amount, t.category_id, coalesce(c.name, 'Uncategorised'),
-                coalesce(c.color_key, 'slate'), t.is_transfer, coalesce(t.transaction_type, ''), a.account_type
+                coalesce(c.color_key, 'slate'), t.is_transfer, coalesce(t.transaction_type, ''), a.account_type,
+                EXISTS (SELECT 1 FROM transaction_splits s WHERE s.transaction_id=t.id)
             FROM transactions t JOIN accounts a ON a.id=t.account_id LEFT JOIN categories c ON c.id=t.category_id
             WHERE NOT a.is_archived AND t.transaction_date <= @end ORDER BY t.transaction_date, t.id
             """;
@@ -1594,11 +1922,35 @@ public static class FinovaDataService
                     var spent = Math.Abs(amount);
                     spending += spent;
                     spendingDaily[date] = spendingDaily.GetValueOrDefault(date) + spent;
+                    if (reader.GetBoolean(8)) continue;
                     int? categoryId = reader.IsDBNull(2) ? null : reader.GetInt32(2);
                     var key = (categoryId, reader.GetString(3), reader.GetString(4));
                     category[key] = category.GetValueOrDefault(key) + spent;
                     if (reader.GetString(3) == "Uncategorised") uncategorised += spent;
                 }
+            }
+        }
+        const string splitCategorySql = """
+            SELECT t.transaction_date::date, s.amount, s.category_id, c.name, c.color_key
+            FROM transactions t
+            JOIN accounts a ON a.id=t.account_id
+            JOIN transaction_splits s ON s.transaction_id=t.id
+            JOIN categories c ON c.id=s.category_id
+            WHERE NOT a.is_archived AND t.amount < 0 AND NOT t.is_transfer
+                AND t.transaction_date >= @start AND t.transaction_date <= @end
+            ORDER BY t.transaction_date, t.id, s.line_order
+            """;
+        await using (var splitCommand = new NpgsqlCommand(splitCategorySql, connection))
+        {
+            splitCommand.Parameters.AddWithValue("start", start.ToDateTime(TimeOnly.MinValue));
+            splitCommand.Parameters.AddWithValue("end", end.ToDateTime(TimeOnly.MaxValue));
+            await using var splitReader = await splitCommand.ExecuteReaderAsync();
+            while (await splitReader.ReadAsync())
+            {
+                var key = (splitReader.GetInt32(2), splitReader.GetString(3), splitReader.GetString(4));
+                var amount = splitReader.GetDecimal(1);
+                category[key] = category.GetValueOrDefault(key) + amount;
+                if (key.Item2 == "Uncategorised") uncategorised += amount;
             }
         }
         var goalProgress = (await GetGoalsAsync()).ProgressPercent;
@@ -1664,7 +2016,8 @@ public static class FinovaDataService
         reader.IsDBNull(10) ? null : reader.GetInt32(10), reader.GetString(11), reader.GetString(12), reader.GetBoolean(13),
         reader.IsDBNull(14) ? null : reader.GetString(14), reader.GetDecimal(15),
         reader.IsDBNull(16) ? null : reader.GetInt32(16), reader.IsDBNull(17) ? null : reader.GetInt32(17),
-        reader.IsDBNull(18) ? null : reader.GetInt32(18), reader.IsDBNull(19) ? null : reader.GetString(19));
+        reader.IsDBNull(18) ? null : reader.GetInt32(18), reader.IsDBNull(19) ? null : reader.GetString(19),
+        reader.GetBoolean(20), reader.GetBoolean(21), reader.GetBoolean(23), reader.GetInt32(22));
 
     private static RecurringItemDto ReadRecurring(NpgsqlDataReader reader) => new(
         reader.GetInt32(0), reader.GetString(1), reader.GetString(2), reader.GetInt32(3), reader.GetString(4),
