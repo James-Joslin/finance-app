@@ -149,12 +149,14 @@ public static class TransactionImportService
 
         var rows = await GetReadyRowsAsync(connection, transaction, batchId);
         var importedDates = new List<DateOnly>();
+        var importedTransactionIds = new List<int>();
         foreach (var row in rows)
         {
             var transactionId = await InsertTransactionAsync(connection, transaction, accountId, batchId, row);
             if (transactionId.HasValue)
             {
                 importedDates.Add(DateOnly.FromDateTime(row.Date));
+                importedTransactionIds.Add(transactionId.Value);
                 await SetRowOutcomeAsync(connection, transaction, row.Id, "imported", null, null, transactionId);
             }
             else
@@ -163,6 +165,9 @@ public static class TransactionImportService
                     "duplicate_at_commit", "A matching transaction was imported after this preview was created.", null);
             }
         }
+
+        if (importedTransactionIds.Count > 0)
+            await FinovaDataService.AutoPairImportedTransfersAsync(connection, transaction, importedTransactionIds);
 
         if (importedDates.Count > 0)
             await FinovaDataService.ReconcileRecurringTransactionsAsync(
@@ -328,6 +333,17 @@ public static class TransactionImportService
         {
             deleteTransactions.Parameters.AddWithValue("batch", batchId);
             deleted = await deleteTransactions.ExecuteNonQueryAsync();
+        }
+
+        await using (var reconcileTransfers = new NpgsqlCommand("""
+            UPDATE transactions t SET is_transfer = EXISTS (
+                SELECT 1 FROM categories c WHERE c.id=t.category_id AND c.kind='transfer'
+            ) OR EXISTS (
+                SELECT 1 FROM transaction_transfer_pairs p WHERE p.transaction_id_a=t.id OR p.transaction_id_b=t.id
+            ) WHERE t.is_transfer
+            """, connection, transaction))
+        {
+            await reconcileTransfers.ExecuteNonQueryAsync();
         }
 
         await using (var updateRows = new NpgsqlCommand(

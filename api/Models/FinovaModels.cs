@@ -84,13 +84,21 @@ public sealed record CategoryDto(
     string Kind,
     string IconKey,
     string ColorKey,
-    bool IsSystem);
+    bool IsSystem,
+    bool IsArchived);
 
 public sealed record CreateCategoryRequest(
     string Name,
     string Kind,
     string IconKey,
     string ColorKey);
+
+public sealed record UpdateCategoryRequest(
+    string Name,
+    string Kind,
+    string IconKey,
+    string ColorKey,
+    bool IsArchived);
 
 public sealed record TransactionTypeCodeDto(
     string Code,
@@ -114,7 +122,10 @@ public sealed record TransactionDtoV2(
     bool IsTransfer,
     string? SourceFileType,
     decimal RunningBalance,
-    int? RecurringItemId);
+    int? RecurringItemId,
+    int? TransferPairId,
+    int? PairedTransactionId,
+    string? PairedAccountName);
 
 public sealed record TransactionPageDto(
     IReadOnlyList<TransactionDtoV2> Items,
@@ -133,6 +144,35 @@ public sealed record TransactionRuleDto(
     string CategoryName,
     int Priority,
     bool IsActive);
+
+public sealed record SaveTransactionRuleRequest(
+    string MatchText,
+    string Direction,
+    int CategoryId,
+    int Priority = 100,
+    bool IsActive = true);
+
+public sealed record TransferPairRequest(int PairedTransactionId);
+
+public sealed record TransferCandidateDto(
+    int Id,
+    int AccountId,
+    string AccountName,
+    DateOnly Date,
+    decimal Amount,
+    string? Payee,
+    string? Memo);
+
+public sealed record TransferPairDto(
+    int Id,
+    int TransactionId,
+    int PairedTransactionId,
+    int PairedAccountId,
+    string PairedAccountName,
+    DateOnly PairedDate,
+    decimal PairedAmount,
+    string? PairedPayee,
+    string? PairedMemo);
 
 public sealed record GoalDto(
     int Id,

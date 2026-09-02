@@ -59,11 +59,23 @@ public sealed class AccountsController : ControllerBase
 public sealed class CategoriesController : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<CategoryDto>>> Get() => Ok(await FinovaDataService.GetCategoriesAsync());
+    public async Task<ActionResult<IReadOnlyList<CategoryDto>>> Get([FromQuery] bool includeArchived = false) =>
+        Ok(await FinovaDataService.GetCategoriesAsync(includeArchived));
 
     [HttpGet("rules")]
     public async Task<ActionResult<IReadOnlyList<TransactionRuleDto>>> GetRules() =>
         Ok(await FinovaDataService.GetTransactionRulesAsync());
+
+    [HttpPost("rules")]
+    public async Task<ActionResult<TransactionRuleDto>> PostRule(SaveTransactionRuleRequest request)
+    {
+        var rule = await FinovaDataService.SaveTransactionRuleAsync(null, request);
+        return Created($"/categories/rules/{rule.Id}", rule);
+    }
+
+    [HttpPut("rules/{id:int}")]
+    public async Task<ActionResult<TransactionRuleDto>> PutRule(int id, SaveTransactionRuleRequest request) =>
+        Ok(await FinovaDataService.SaveTransactionRuleAsync(id, request));
 
     [HttpDelete("rules/{id:int}")]
     public async Task<IActionResult> DeleteRule(int id) =>
@@ -75,6 +87,14 @@ public sealed class CategoriesController : ControllerBase
         var category = await FinovaDataService.CreateCategoryAsync(request);
         return Created($"/categories/{category.Id}", category);
     }
+
+    [HttpPut("{id:int}")]
+    public async Task<ActionResult<CategoryDto>> Put(int id, UpdateCategoryRequest request) =>
+        Ok(await FinovaDataService.UpdateCategoryAsync(id, request));
+
+    [HttpDelete("{id:int}")]
+    public async Task<IActionResult> Delete(int id) =>
+        await FinovaDataService.DeleteCategoryAsync(id) ? NoContent() : NotFound();
 }
 
 [ApiController]
@@ -91,6 +111,21 @@ public sealed class TransactionsController : ControllerBase
         [FromQuery] string type = "all", [FromQuery] DateOnly? startDate = null,
         [FromQuery] DateOnly? endDate = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20) =>
         Ok(await FinovaDataService.GetTransactionsAsync(accountId, categoryId, search, type, startDate, endDate, page, pageSize));
+
+    [HttpGet("{id:int}/transfer-candidates")]
+    public async Task<ActionResult<IReadOnlyList<TransferCandidateDto>>> TransferCandidates(int id) =>
+        Ok(await FinovaDataService.GetTransferCandidatesAsync(id));
+
+    [HttpPost("{id:int}/transfer-pair")]
+    public async Task<ActionResult<TransferPairDto>> PairTransfer(int id, TransferPairRequest request) =>
+        Ok(await FinovaDataService.PairTransferAsync(id, request.PairedTransactionId));
+
+    [HttpDelete("{id:int}/transfer-pair")]
+    public async Task<IActionResult> UnpairTransfer(int id)
+    {
+        await FinovaDataService.UnpairTransferAsync(id);
+        return NoContent();
+    }
 
     [HttpPatch("{id:int}/category")]
     public async Task<IActionResult> PatchCategory(int id, UpdateTransactionCategoryRequest request)
