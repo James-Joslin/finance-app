@@ -99,12 +99,12 @@ export const useTransactions = (params) =>
         queryKey: queryKeys.transactions(params),
         queryFn: () => get('/transactions', params),
         placeholderData: (previous) => previous,
+    });
 export const useTransaction = (id) =>
     useQuery({
         queryKey: queryKeys.transaction(id),
         queryFn: () => get('/transactions/' + id),
         enabled: Boolean(id),
-    });
     });
 export const useInsights = (params) =>
     useQuery({
@@ -145,9 +145,6 @@ export const useFinovaMutation = (
                 typeof successMessage === 'function'
                     ? successMessage(data, variables)
                     : successMessage;
-    createTransaction: (body) => post('/transactions', body),
-    updateTransaction: ({ id, body }) => put('/transactions/' + id, body),
-    deleteTransaction: (id) => del('/transactions/' + id),
             if (message) notifySuccess(message);
         },
     });
@@ -158,6 +155,9 @@ export const mutations = {
     saveSettings: (body) => put('/settings', body),
     createAccount: (body) => post('/accounts', body),
     updateAccount: ({ id, body }) => put('/accounts/' + id, body),
+    createTransaction: (body) => post('/transactions', body),
+    updateTransaction: ({ id, body }) => put('/transactions/' + id, body),
+    deleteTransaction: (id) => del('/transactions/' + id),
     updateTransactionCategory: ({ id, categoryId, saveRule }) =>
         patch('/transactions/' + id + '/category', { categoryId, saveRule }),
     createCategory: (body) => post('/categories', body),
