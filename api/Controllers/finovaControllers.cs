@@ -131,8 +131,9 @@ public sealed class TransactionsController : ControllerBase
     public async Task<ActionResult<TransactionPageDto>> Get(
         [FromQuery] int? accountId, [FromQuery] int? categoryId, [FromQuery] string? search,
         [FromQuery] string type = "all", [FromQuery] DateOnly? startDate = null,
-        [FromQuery] DateOnly? endDate = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20) =>
-        Ok(await FinovaDataService.GetTransactionsAsync(accountId, categoryId, search, type, startDate, endDate, page, pageSize));
+        [FromQuery] DateOnly? endDate = null, [FromQuery] int page = 1, [FromQuery] int pageSize = 20,
+        [FromQuery] int? transactionId = null) =>
+        Ok(await FinovaDataService.GetTransactionsAsync(accountId, categoryId, search, type, startDate, endDate, page, pageSize, transactionId));
 
     [HttpGet("{id:int}/transfer-candidates")]
     public async Task<ActionResult<IReadOnlyList<TransferCandidateDto>>> TransferCandidates(int id) =>
@@ -348,12 +349,29 @@ public sealed class PlanController : ControllerBase
         Ok(await FinovaDataService.GetRecurringSuggestionsAsync());
 
     [HttpGet("budgets")]
-    public async Task<ActionResult<IReadOnlyList<BudgetDto>>> Budgets([FromQuery] DateOnly? month = null) =>
-        Ok(await FinovaDataService.GetBudgetsAsync(month));
+    public async Task<ActionResult<IReadOnlyList<BudgetDto>>> Budgets(
+        [FromQuery] DateOnly? month = null, [FromQuery] bool includeInactive = false) =>
+        Ok(await FinovaDataService.GetBudgetsAsync(month, includeInactive));
+
+    [HttpGet("budgets/months")]
+    public async Task<ActionResult<BudgetMonthIndexDto>> BudgetMonths() =>
+        Ok(await FinovaDataService.GetBudgetMonthIndexAsync());
 
     [HttpPut("budgets")]
     public async Task<ActionResult<BudgetDto>> PutBudget(SaveBudgetRequest request) =>
         Ok(await FinovaDataService.SaveBudgetAsync(request));
+
+    [HttpPost("budgets/close")]
+    public async Task<ActionResult<BudgetMonthSummaryDto>> CloseBudgetMonth(CloseBudgetMonthRequest request) =>
+        Ok(await FinovaDataService.CloseBudgetMonthAsync(request));
+
+    [HttpPatch("budgets/{id:int}/active")]
+    public async Task<ActionResult<BudgetDto>> SetBudgetActive(int id, SetBudgetActiveRequest request) =>
+        Ok(await FinovaDataService.SetBudgetActiveAsync(id, request));
+
+    [HttpDelete("budgets/{id:int}")]
+    public async Task<IActionResult> DeleteBudget(int id) =>
+        await FinovaDataService.DeleteBudgetAsync(id) ? NoContent() : NotFound();
 
     [HttpGet("safety")]
     public async Task<ActionResult<IReadOnlyList<AccountSafetyDto>>> Safety() =>

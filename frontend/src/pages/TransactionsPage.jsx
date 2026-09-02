@@ -15,6 +15,7 @@ import {
     Search,
     WalletCards,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import RecurringEditor from '../components/RecurringEditor';
 import TransactionEditor from '../components/TransactionEditor';
 import {
@@ -38,6 +39,7 @@ import {
     useTransferCandidates,
 } from '../lib/queries';
 
+import { parseRecordId, useDeepLinkTarget } from '../utils/deepLink';
 const initialFilters = {
     type: 'all',
     accountId: '',
@@ -47,6 +49,8 @@ const initialFilters = {
 };
 
 export default function TransactionsPage() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const transactionId = parseRecordId(searchParams.get('transactionId'));
     const [filters, setFilters] = useState(initialFilters);
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
@@ -63,6 +67,7 @@ export default function TransactionsPage() {
         () => ({
             page,
             pageSize: 20,
+            transactionId: transactionId || undefined,
             type: filters.type,
             accountId: filters.accountId || undefined,
             categoryId: filters.categoryId || undefined,
@@ -70,15 +75,27 @@ export default function TransactionsPage() {
             endDate: filters.endDate || undefined,
             search: search || undefined,
         }),
-        [page, filters, search]
+        [page, filters, search, transactionId]
     );
     const transactions = useTransactions(params);
+    useDeepLinkTarget(
+        transactionId,
+        transactions.data,
+        '[data-deep-link-type="transaction"]'
+    );
     const pageQueries = [transactions, accounts, categories];
     const hasFilters =
         search ||
         Object.values(filters).some((value) => value && value !== 'all');
 
+    const clearTransactionTarget = () => {
+        if (!searchParams.has('transactionId')) return;
+        const next = new URLSearchParams(searchParams);
+        next.delete('transactionId');
+        setSearchParams(next, { replace: true });
+    };
     const change = (name, value) => {
+        clearTransactionTarget();
         setFilters((current) => ({ ...current, [name]: value }));
         setPage(1);
     };
@@ -144,6 +161,7 @@ export default function TransactionsPage() {
                     <input
                         value={search}
                         onChange={(event) => {
+                            clearTransactionTarget();
                             setSearch(event.target.value);
                             setPage(1);
                         }}
@@ -208,6 +226,7 @@ export default function TransactionsPage() {
                         <button
                             className="button ghost"
                             onClick={() => {
+                                clearTransactionTarget();
                                 setFilters(initialFilters);
                                 setSearch('');
                                 setPage(1);
@@ -243,6 +262,7 @@ export default function TransactionsPage() {
                         categories={categories.data || []}
                         onMarkRecurring={setRecurringTransaction}
                         onPair={setPairTransaction}
+                        focusedId={transactionId}
                         onEdit={(item) => {
                             setEditingTransaction(item);
                             setTransactionEditorOpen(true);
@@ -252,7 +272,10 @@ export default function TransactionsPage() {
                         page={page}
                         totalPages={transactions.data?.totalPages || 1}
                         totalItems={transactions.data?.totalItems || 0}
-                        onChange={setPage}
+                        onChange={(nextPage) => {
+                            clearTransactionTarget();
+                            setPage(nextPage);
+                        }}
                     />
                 </PageState>
             </Card>
@@ -292,6 +315,7 @@ function TransactionTable({
     categories,
     onMarkRecurring,
     onPair,
+    focusedId,
     onEdit,
 }) {
     const updateCategory = useFinovaMutation(
@@ -343,7 +367,16 @@ function TransactionTable({
                     </thead>
                     <tbody>
                         {items.map((item) => (
-                            <tr key={item.id}>
+                            <tr
+                                key={item.id}
+                                className={
+                                    focusedId === item.id
+                                        ? 'deep-link-target'
+                                        : ''
+                                }
+                                data-deep-link-type="transaction"
+                                data-deep-link-id={item.id}
+                            >
                                 <td>{shortDate(item.date)}</td>
                                 <td>
                                     <div className="description-cell">
@@ -508,7 +541,16 @@ function TransactionTable({
             </div>
             <div className="mobile-transaction-list">
                 {items.map((item) => (
-                    <article className="mobile-transaction" key={item.id}>
+                    <article
+                        className={
+                            focusedId === item.id
+                                ? 'mobile-transaction deep-link-target'
+                                : 'mobile-transaction'
+                        }
+                        data-deep-link-type="transaction"
+                        data-deep-link-id={item.id}
+                        key={item.id}
+                    >
                         <span
                             className={
                                 'transaction-mark ' +

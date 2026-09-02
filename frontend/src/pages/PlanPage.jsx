@@ -1,5 +1,7 @@
+import { useSearchParams } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import {
+    Archive,
     ArrowDownToLine,
     ArrowUpFromLine,
     CalendarClock,
@@ -9,8 +11,10 @@ import {
     Lightbulb,
     Pencil,
     Plus,
+    RotateCcw,
     ShieldCheck,
     Sparkles,
+    Trash2,
 } from 'lucide-react';
 import RecurringEditor from '../components/RecurringEditor';
 import OccurrenceEditor from '../components/OccurrenceEditor';
@@ -34,6 +38,7 @@ import {
     mutations,
     queryKeys,
     useAccounts,
+    useBudgetMonths,
     useBudgets,
     useCategories,
     useFinovaMutation,
@@ -43,11 +48,19 @@ import {
     useSuggestions,
 } from '../lib/queries';
 
+import { parseRecordId, useDeepLinkTarget } from '../utils/deepLink';
+
 export default function PlanPage() {
+    const [searchParams] = useSearchParams();
+    const recurringId = parseRecordId(searchParams.get('recurringId'));
     const safety = useSafety();
     const recurring = useRecurring();
     const occurrences = useOccurrences();
-    const budgets = useBudgets();
+    const budgetMonths = useBudgetMonths();
+    const [budgetMonth, setBudgetMonth] = useState('');
+    const selectedBudgetMonth =
+        budgetMonth || budgetMonths.data?.currentMonth || '';
+    const budgets = useBudgets(selectedBudgetMonth || undefined, true);
     const suggestions = useSuggestions();
     const accounts = useAccounts();
     const categories = useCategories();
@@ -56,11 +69,19 @@ export default function PlanPage() {
     const [budgetOpen, setBudgetOpen] = useState(false);
     const [upcomingOpen, setUpcomingOpen] = useState(false);
     const [schedulesOpen, setSchedulesOpen] = useState(false);
+    useEffect(() => {
+        if (recurringId) setSchedulesOpen(true);
+    }, [recurringId]);
+    useEffect(() => {
+        if (!budgetMonth && budgetMonths.data?.currentMonth)
+            setBudgetMonth(budgetMonths.data.currentMonth);
+    }, [budgetMonth, budgetMonths.data?.currentMonth]);
 
     const pageQueries = [
         safety,
         recurring,
         occurrences,
+        budgetMonths,
         budgets,
         suggestions,
         accounts,
@@ -75,6 +96,11 @@ export default function PlanPage() {
     const activeRecurringCount = recurringItems.filter(
         (item) => item.isActive
     ).length;
+    useDeepLinkTarget(
+        recurringId,
+        recurring.data && schedulesOpen,
+        '[data-deep-link-type="recurring"]'
+    );
 
     return (
         <PageState
@@ -171,40 +197,14 @@ export default function PlanPage() {
                     <Suggestions items={suggestions.data} />
                 )}
 
-                <section className="section-heading">
-                    <div>
-                        <span className="eyebrow">Monthly budgets</span>
-                        <h2>Spend with intention</h2>
-                        <p>
-                            Unused money can roll forward by category;
-                            overspending never creates rollover debt.
-                        </p>
-                    </div>
-                    <button
-                        className="button secondary"
-                        onClick={() => setBudgetOpen(true)}
-                    >
-                        <Plus /> Set a budget
-                    </button>
-                </section>
-                <div className="budget-grid">
-                    {(budgets.data || []).map((budget) => (
-                        <BudgetCard
-                            key={budget.id}
-                            budget={budget}
-                            onEdit={() => setBudgetOpen(budget)}
-                        />
-                    ))}
-                    {(budgets.data || []).length === 0 && (
-                        <Card className="empty-inline">
-                            <Lightbulb />
-                            <p>
-                                Set the first monthly category budget to start
-                                measuring pace.
-                            </p>
-                        </Card>
-                    )}
-                </div>
+                <BudgetSection
+                    months={budgetMonths.data}
+                    selectedMonth={selectedBudgetMonth}
+                    onMonth={setBudgetMonth}
+                    budgets={budgets.data || []}
+                    onEdit={setBudgetOpen}
+                    onNew={() => setBudgetOpen(true)}
+                />
 
                 <RecurringEditor
                     open={Boolean(recurringEditor)}
@@ -450,7 +450,12 @@ function RecurringTimeline({ items, onEdit }) {
     return (
         <div className="recurring-list">
             {items.map((item) => (
-                <article key={item.id} className="recurring-row">
+                <article
+                    key={item.id}
+                    className="recurring-row"
+                    data-deep-link-type="recurring"
+                    data-deep-link-id={item.id}
+                >
                     <span className={'recurring-icon ' + item.kind}>
                         {item.kind === 'income' ? (
                             <ArrowDownToLine />
@@ -573,10 +578,209 @@ function Suggestions({ items }) {
     );
 }
 
-function BudgetCard({ budget, onEdit }) {
-    const over = Number(budget.remainingAmount) < 0;
+function BudgetSection({
+    months,
+    selectedMonth,
+    onMonth,
+    budgets,
+    onEdit,
+    onNew,
+}) {
+    const close = useFinovaMutation(
+        mutations.closeBudgetMonth,
+        [queryKeys.budgets, queryKeys.dashboard],
+        { successMessage: 'Budget month finalized.' }
+    );
+    const currentMonth = months?.currentMonth || selectedMonth;
+    const summary = (months?.months || []).find(
+        (item) => item.month === selectedMonth
+    );
+    const closed = summary?.isClosed || budgets.some((item) => item.isClosed);
+    const isCurrent = selectedMonth === currentMonth;
+    const activeBudgets = budgets.filter((item) => item.isActive);
+    const inactiveBudgets = budgets.filter((item) => !item.isActive);
+    const canEdit = isCurrent && !closed;
+    const closeMonth = async () => {
+        if (
+            !selectedMonth ||
+            closed ||
+            !window.confirm(
+                `Finalize ${monthLabel(selectedMonth)}? This permanently locks the budget snapshot and cannot be reopened.`
+            )
+        )
+            return;
+        try {
+            await close.mutateAsync({ month: selectedMonth });
+        } catch {
+            // The mutation error remains visible beside the month controls.
+        }
+    };
+
     return (
-        <Card className="budget-card" onClick={onEdit}>
+        <section className="budget-section">
+            <div className="section-heading budget-section-heading">
+                <div>
+                    <span className="eyebrow">Monthly budgets</span>
+                    <h2>Spend with intention</h2>
+                    <p>
+                        Unused money can roll forward by category; overspending
+                        never creates rollover debt.
+                    </p>
+                </div>
+                <div className="budget-history-controls">
+                    <label className="budget-month-field">
+                        <span>Budget month</span>
+                        <select
+                            aria-label="Budget month"
+                            value={selectedMonth}
+                            onChange={(event) => onMonth(event.target.value)}
+                        >
+                            {(months?.months || []).map((item) => (
+                                <option key={item.month} value={item.month}>
+                                    {monthLabel(item.month)}
+                                    {item.isClosed ? ' · Finalized' : ' · Open'}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <button
+                        className="button secondary"
+                        onClick={onNew}
+                        disabled={!canEdit}
+                        title={
+                            canEdit
+                                ? undefined
+                                : 'Only the open current month can be edited.'
+                        }
+                    >
+                        <Plus /> Set a budget
+                    </button>
+                    <button
+                        className="button"
+                        onClick={closeMonth}
+                        disabled={
+                            closed || budgets.length === 0 || close.isPending
+                        }
+                    >
+                        {close.isPending
+                            ? 'Finalizing…'
+                            : closed
+                              ? 'Month finalized'
+                              : 'Close month'}
+                    </button>
+                </div>
+            </div>
+            <InlineError>{close.error && apiError(close.error)}</InlineError>
+            {closed && (
+                <div className="budget-finalized-note">
+                    <Archive aria-hidden="true" />
+                    <span>
+                        {monthLabel(selectedMonth)} is finalized. Its snapshot
+                        and rollover boundary are permanent.
+                    </span>
+                </div>
+            )}
+            <div className="budget-grid">
+                {activeBudgets.map((budget) => (
+                    <BudgetCard
+                        key={budget.id}
+                        budget={budget}
+                        readOnly={!canEdit}
+                        onEdit={() => onEdit(budget)}
+                    />
+                ))}
+                {activeBudgets.length === 0 && inactiveBudgets.length === 0 && (
+                    <Card className="empty-inline">
+                        <Lightbulb />
+                        <p>
+                            Set the first monthly category budget to start
+                            measuring pace.
+                        </p>
+                    </Card>
+                )}
+            </div>
+            {inactiveBudgets.length > 0 && (
+                <div className="budget-inactive-section">
+                    <div className="card-heading">
+                        <div>
+                            <span className="eyebrow">Inactive budgets</span>
+                            <p>
+                                These budgets remain available in history but no
+                                longer appear in active totals.
+                            </p>
+                        </div>
+                        <Pill tone="warning">
+                            {inactiveBudgets.length} inactive
+                        </Pill>
+                    </div>
+                    <div className="budget-inactive-list">
+                        {inactiveBudgets.map((budget) => (
+                            <BudgetCard
+                                key={budget.id}
+                                budget={budget}
+                                readOnly
+                                controlsEnabled={canEdit}
+                                onEdit={() => {}}
+                            />
+                        ))}
+                    </div>
+                </div>
+            )}
+        </section>
+    );
+}
+
+function BudgetCard({ budget, readOnly, controlsEnabled, onEdit }) {
+    const over = Number(budget.remainingAmount) < 0;
+    const canControl = controlsEnabled ?? !readOnly;
+    const invalidate = [queryKeys.budgets, queryKeys.dashboard];
+    const active = useFinovaMutation(mutations.setBudgetActive, invalidate, {
+        successMessage: (data) =>
+            data?.isActive ? 'Budget reactivated.' : 'Budget deactivated.',
+    });
+    const remove = useFinovaMutation(mutations.deleteBudget, invalidate, {
+        successMessage: 'Budget deleted.',
+    });
+    const setActive = async (event) => {
+        event.stopPropagation();
+        if (
+            !budget.isActive ||
+            window.confirm(
+                `Deactivate the ${budget.categoryName} budget? Its history will remain intact.`
+            )
+        ) {
+            try {
+                await active.mutateAsync({
+                    id: budget.id,
+                    isActive: !budget.isActive,
+                });
+            } catch {
+                // The mutation error remains visible on the card.
+            }
+        }
+    };
+    const deleteBudget = async (event) => {
+        event.stopPropagation();
+        if (
+            !window.confirm(
+                `Delete the ${budget.categoryName} budget? Budgets with history must be deactivated instead.`
+            )
+        )
+            return;
+        try {
+            await remove.mutateAsync(budget.id);
+        } catch {
+            // The mutation error remains visible on the card.
+        }
+    };
+    const pending = active.isPending || remove.isPending;
+    return (
+        <Card
+            className={
+                'budget-card' + (readOnly ? ' budget-card-readonly' : '')
+            }
+            onClick={readOnly ? undefined : onEdit}
+        >
             <div className="card-heading">
                 <span
                     className={
@@ -586,17 +790,33 @@ function BudgetCard({ budget, onEdit }) {
                 >
                     {budget.categoryName}
                 </span>
-                <Pill
-                    tone={
-                        over
-                            ? 'danger'
-                            : budget.progressPercent >= 80
-                              ? 'warning'
-                              : 'success'
-                    }
-                >
-                    {percent(budget.progressPercent)}
-                </Pill>
+                <div className="budget-card-heading-actions">
+                    <Pill
+                        tone={
+                            budget.isClosed
+                                ? 'neutral'
+                                : over
+                                  ? 'danger'
+                                  : budget.progressPercent >= 80
+                                    ? 'warning'
+                                    : 'success'
+                        }
+                    >
+                        {budget.isClosed
+                            ? 'Finalized'
+                            : percent(budget.progressPercent)}
+                    </Pill>
+                    {!readOnly && (
+                        <button
+                            className="icon-button"
+                            type="button"
+                            onClick={onEdit}
+                            aria-label={'Edit ' + budget.categoryName}
+                        >
+                            <Pencil />
+                        </button>
+                    )}
+                </div>
             </div>
             <div className="budget-values">
                 <strong>{money(budget.spentAmount)}</strong>
@@ -623,8 +843,61 @@ function BudgetCard({ budget, onEdit }) {
                     <span>{money(budget.rolloverIn)} rolled in</span>
                 )}
             </div>
+            {canControl && budget.isActive && (
+                <div className="budget-card-actions">
+                    <button
+                        className="button small secondary"
+                        type="button"
+                        onClick={setActive}
+                        disabled={pending}
+                    >
+                        <Archive /> Deactivate
+                    </button>
+                    <button
+                        className="button small danger ghost"
+                        type="button"
+                        onClick={deleteBudget}
+                        disabled={pending}
+                    >
+                        <Trash2 /> Delete
+                    </button>
+                </div>
+            )}
+            {canControl && !budget.isActive && !budget.isClosed && (
+                <div className="budget-card-actions">
+                    <button
+                        className="button small secondary"
+                        type="button"
+                        onClick={setActive}
+                        disabled={pending}
+                    >
+                        <RotateCcw /> Reactivate
+                    </button>
+                    <button
+                        className="button small danger ghost"
+                        type="button"
+                        onClick={deleteBudget}
+                        disabled={pending}
+                    >
+                        <Trash2 /> Delete
+                    </button>
+                </div>
+            )}
+            <InlineError>
+                {(active.error || remove.error) &&
+                    apiError(active.error || remove.error)}
+            </InlineError>
         </Card>
     );
+}
+
+function monthLabel(value) {
+    if (!value) return 'Current month';
+    return new Intl.DateTimeFormat(undefined, {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+    }).format(new Date(value + 'T00:00:00Z'));
 }
 
 function BudgetModal({ open, budget, onClose, categories }) {

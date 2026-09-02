@@ -399,6 +399,26 @@ button:disabled {
     width: 1rem;
     height: 1rem;
 }
+.deep-link-highlight {
+    animation: deep-link-pulse 1.8s ease-out;
+    outline: 2px solid color-mix(in srgb, var(--brand) 72%, transparent);
+    outline-offset: -2px;
+}
+@keyframes deep-link-pulse {
+    0%,
+    100% {
+        background: var(--surface);
+    }
+    18% {
+        background: color-mix(in srgb, var(--brand-soft) 78%, var(--surface));
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    .deep-link-highlight {
+        animation: none;
+        background: color-mix(in srgb, var(--brand-soft) 78%, var(--surface));
+    }
+}
 .global-search-trigger {
     width: 260px;
     height: 38px;
@@ -1320,6 +1340,14 @@ kbd {
 }
 .plan-collapsible-heading {
     align-items: stretch;
+    gap: 0.75rem;
+}
+.plan-collapsible-heading > .plan-collapse-trigger {
+    width: auto;
+    flex: 1 1 auto;
+}
+.plan-collapsible-heading > .plan-collapsible-actions {
+    flex: 0 0 auto;
 }
 .plan-collapse-trigger {
     width: 100%;
@@ -1379,7 +1407,9 @@ kbd {
 .recurring-row {
     min-height: 62px;
     display: grid;
-    grid-template-columns: 36px 1fr auto 72px;
+    grid-template-columns:
+        36px minmax(0, 1fr) minmax(9.5rem, max-content)
+        minmax(6.5rem, max-content);
     gap: 0.75rem;
     align-items: center;
     border-bottom: 1px solid var(--border);
@@ -1392,8 +1422,19 @@ kbd {
     display: flex;
     flex-direction: column;
 }
+.recurring-row > span:nth-child(2) {
+    min-width: 0;
+}
+.recurring-row > span:nth-child(2) strong,
+.recurring-row > span:nth-child(2) small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
 .recurring-row > span:nth-child(3) {
+    min-width: 9.5rem;
     align-items: flex-end;
+    white-space: nowrap;
 }
 .recurring-row strong {
     font-size: 0.68rem;
@@ -1407,6 +1448,12 @@ kbd {
     align-items: center;
     justify-content: flex-end;
     gap: 0.4rem;
+    min-width: 6.5rem;
+    padding-inline-start: 0.75rem;
+    white-space: nowrap;
+}
+.recurring-actions .pill {
+    flex: 0 0 auto;
 }
 .recurring-actions .icon-button,
 .transaction-action .icon-button {
@@ -1512,6 +1559,84 @@ kbd {
 }
 .suggestion-grid .button {
     grid-column: 1 / -1;
+}
+.budget-section-heading {
+    align-items: flex-start;
+    padding-bottom: 0.25rem;
+}
+.budget-history-controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.55rem;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    margin-top: 0.15rem;
+}
+.budget-month-field {
+    display: grid;
+    gap: 0.25rem;
+    color: var(--text-muted);
+    font-size: 0.55rem;
+    font-weight: 700;
+}
+.budget-month-field select {
+    min-width: 10rem;
+}
+.budget-finalized-note {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin: 0 0 0.85rem;
+    padding: 0.65rem 0.8rem;
+    border: 1px solid color-mix(in srgb, var(--brand) 22%, var(--border));
+    border-radius: 10px;
+    color: var(--text-soft);
+    background: var(--surface-brand);
+    font-size: 0.62rem;
+}
+.budget-finalized-note svg {
+    width: 1rem;
+    color: var(--brand);
+}
+.budget-card-readonly {
+    cursor: default;
+}
+.budget-card-heading-actions,
+.budget-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+.budget-card-actions {
+    justify-content: flex-end;
+    margin-top: 0.8rem;
+}
+.budget-card-actions .button {
+    min-height: 26px;
+}
+.budget-inactive-section {
+    margin-top: 1rem;
+    padding: 0.85rem;
+    border: 1px dashed var(--border);
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--surface) 82%, transparent);
+}
+.budget-inactive-section .card-heading {
+    align-items: start;
+}
+.budget-inactive-section .card-heading p {
+    margin: 0.25rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.6rem;
+}
+.budget-inactive-list {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.7rem;
+    margin-top: 0.7rem;
+}
+.budget-inactive-list .budget-card {
+    background: color-mix(in srgb, var(--surface) 75%, var(--surface-muted));
 }
 .budget-card {
     cursor: pointer;
@@ -2780,7 +2905,8 @@ kbd {
         min-height: 220px;
     }
     .safety-grid,
-    .budget-grid {
+    .budget-grid,
+    .budget-inactive-list {
         grid-template-columns: repeat(2, 1fr);
     }
     .suggestion-grid {
@@ -2949,6 +3075,16 @@ kbd {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
     }
+    .budget-history-controls {
+        width: 100%;
+        justify-content: stretch;
+    }
+    .budget-month-field {
+        flex: 1 1 100%;
+    }
+    .budget-history-controls > .button {
+        flex: 1 1 0;
+    }
     .toolbar-actions .button {
         padding-inline: 0.4rem;
     }
@@ -3020,13 +3156,33 @@ kbd {
     }
     .safety-grid,
     .budget-grid,
+    .budget-inactive-list,
     .suggestion-grid,
     .goals-grid {
         grid-template-columns: 1fr;
     }
     .recurring-row {
-        grid-template-columns: 34px 1fr auto;
+        grid-template-columns: 34px minmax(0, 1fr) max-content;
         padding: 0.55rem 0;
+    }
+    .recurring-row > span:nth-child(1) {
+        grid-column: 1;
+        grid-row: 1;
+    }
+    .recurring-row > span:nth-child(2) {
+        grid-column: 2;
+        grid-row: 1;
+    }
+    .recurring-row > span:nth-child(3) {
+        grid-column: 2 / -1;
+        grid-row: 2;
+        min-width: 0;
+        align-items: flex-start;
+    }
+    .recurring-row > .recurring-actions {
+        grid-column: 3;
+        grid-row: 1;
+        min-width: 29px;
     }
     .recurring-row .pill {
         display: none;
