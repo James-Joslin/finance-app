@@ -16,13 +16,16 @@ export const queryKeys = {
     occurrences: ['recurring-occurrences'],
     budgets: ['budgets'],
     safety: ['safety'],
+    transactionsRoot: ['transactions'],
     transactions: (params) => ['transactions', params],
+    importsRoot: ['transaction-imports'],
     imports: (params) => ['transaction-imports', params],
     importRows: (batchId, params) => [
         'transaction-import-rows',
         batchId,
         params,
     ],
+    insightsRoot: ['insights'],
     insights: (params) => ['insights', params],
 };
 
@@ -181,6 +184,10 @@ export const mutations = {
     pairTransfer: ({ id, pairedTransactionId }) =>
         post('/transactions/' + id + '/transfer-pair', { pairedTransactionId }),
     unpairTransfer: (id) => del('/transactions/' + id + '/transfer-pair'),
+    importPortableArchive: (form) =>
+        post('/portability/import', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        }),
     importTransactions: (form) =>
         post('/transactions/import', form, {
             headers: { 'Content-Type': 'multipart/form-data' },

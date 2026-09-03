@@ -2,6 +2,8 @@ import { useSearchParams } from 'react-router-dom';
 import { createElement, useEffect, useMemo, useState } from 'react';
 import {
     Archive,
+    Download,
+    FileUp,
     Building2,
     Moon,
     Pencil,
@@ -13,6 +15,7 @@ import {
     UserRound,
     Users,
 } from 'lucide-react';
+import PortabilityCard from '../components/PortabilityCard';
 import { useTheme } from '../contexts/ThemeContext';
 import {
     Card,
@@ -320,6 +323,8 @@ export default function SettingsPage() {
                             </form>
                         )}
                     </Card>
+
+                    <PortabilityCard />
 
                     <Card>
                         <div className="settings-card-heading">
