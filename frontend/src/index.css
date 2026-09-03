@@ -2658,6 +2658,11 @@ kbd {
     gap: 0.55rem;
     margin-top: 0.35rem;
 }
+.portability-links {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    max-width: 100%;
+}
 .form-stack {
     display: flex;
     flex-direction: column;
