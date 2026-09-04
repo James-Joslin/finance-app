@@ -1077,6 +1077,60 @@ kbd {
 .snapshot-stats strong {
     font-size: 0.7rem;
 }
+.upcoming-expenditure-card {
+    grid-column: 1 / -1;
+}
+.upcoming-expenditure-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.65rem;
+    margin-top: 0.85rem;
+}
+.upcoming-expenditure-item {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 0.65rem;
+    padding: 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface-muted);
+}
+.upcoming-expenditure-item > span {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.18rem;
+}
+.upcoming-expenditure-item strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.68rem;
+}
+.upcoming-expenditure-item small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted);
+    font-size: 0.55rem;
+}
+.upcoming-expenditure-date {
+    padding-right: 0.65rem;
+    border-right: 1px solid var(--border);
+}
+.upcoming-expenditure-date strong {
+    color: var(--brand);
+}
+.upcoming-expenditure-amount {
+    color: var(--danger);
+}
+.upcoming-empty {
+    margin: 0.85rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.65rem;
+}
 .insight-callout {
     display: flex;
     gap: 0.5rem;
@@ -1274,6 +1328,83 @@ kbd {
 }
 .section-heading p {
     font-size: 0.7rem;
+}
+.help-intro {
+    padding: 1.35rem;
+    background: linear-gradient(135deg, var(--surface-brand), var(--surface));
+}
+.help-intro h2 {
+    max-width: 760px;
+    margin: 0.45rem 0 0.35rem;
+    font-size: clamp(1.25rem, 2.4vw, 1.8rem);
+}
+.help-intro p {
+    max-width: 760px;
+    font-size: 0.72rem;
+}
+.help-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.85rem;
+}
+.help-card {
+    height: 100%;
+}
+.help-card-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.7rem;
+    margin-bottom: 0.9rem;
+}
+.help-card-heading h2 {
+    margin-top: 0.2rem;
+    margin-bottom: 0;
+}
+.help-icon {
+    width: 34px;
+    height: 34px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border-radius: 10px;
+    color: var(--brand);
+    background: var(--brand-soft);
+}
+.help-icon svg {
+    width: 1rem;
+    height: 1rem;
+}
+.help-card-copy {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.65rem;
+}
+.help-card-copy p,
+.help-card-copy li {
+    font-size: 0.68rem;
+}
+.help-card-copy ul {
+    margin: 0;
+    padding-left: 1.1rem;
+}
+.help-card-copy li + li {
+    margin-top: 0.45rem;
+}
+.help-card-copy a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    color: var(--brand);
+    font-size: 0.67rem;
+    font-weight: 700;
+}
+.help-card-copy a svg {
+    width: 0.75rem;
+    height: 0.75rem;
+}
+.help-note {
+    color: var(--text-muted);
 }
 .safety-grid,
 .budget-grid {
@@ -1523,6 +1654,10 @@ kbd {
 .recurring-icon.income {
     color: var(--mint);
     background: var(--mint-soft);
+}
+.recurring-icon.transfer {
+    color: var(--violet);
+    background: color-mix(in srgb, var(--violet) 12%, var(--surface));
 }
 .suggestions-card {
     background: linear-gradient(135deg, var(--surface), var(--surface-brand));
@@ -3007,7 +3142,8 @@ kbd {
     }
     .overview-grid,
     .insights-grid,
-    .settings-layout {
+    .settings-layout,
+    .help-grid {
         grid-template-columns: 1fr;
     }
     .safe-card,
@@ -3017,6 +3153,9 @@ kbd {
     .priority-card,
     .snapshot-card {
         min-height: auto;
+    }
+    .upcoming-expenditure-grid {
+        grid-template-columns: 1fr;
     }
     .safe-card {
         min-height: 245px;
@@ -3069,6 +3208,9 @@ kbd {
         display: flex;
     }
     .snapshot-card {
+        grid-template-columns: 1fr 1fr;
+    }
+    .upcoming-expenditure-grid {
         grid-template-columns: 1fr 1fr;
     }
     .page-toolbar,

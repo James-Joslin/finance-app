@@ -27,6 +27,32 @@ The application is composed of:
 - Alembic database migrations.
 - Nginx as the production frontend and API gateway.
 
+## Using Finova
+
+After enrollment, use the Help & support item in the application sidebar for the in-app household
+guide. The main workflows are:
+
+- Add accounts and opening balances in Settings. Finova calculates planning balances from those
+  values and imported activity; it does not connect to banks or move money.
+- Import OFX, QIF, or selectable-text Halifax PDF statements from Transactions. Preview and review
+  rows before committing an import, then export transaction data as CSV when needed. Image-only PDF
+  scans must be processed with OCR first and are rejected by Finova.
+- Use Overview to read safe to spend after account buffers and confirmed near-term bills.
+- Use Plan for account safety floors, recurring bills and paydays, transaction-pattern suggestions,
+  monthly category budgets, and optional positive rollover. Unmatched confirmed occurrences are the
+  only occurrences that change safe to spend.
+- Use Goals to set account-backed savings targets and reorder their priority. Finova calculates
+  progress and allocation paths without transferring funds.
+- Use Reconciliation to compare an account ledger with a statement, clear matching transactions,
+  and resolve the closing discrepancy before completing a session.
+- Use Settings for household preferences, categories, automatic rules, theme, and portability.
+  Finova is designed for a trusted private network, and private goal images are included in the
+  household archive.
+
+If a page cannot load, use its retry action and check the service health endpoints in the
+[Troubleshooting](#troubleshooting) section. For import problems, confirm the file format and that
+PDF statements contain selectable text.
+
 The development and production stacks use different Compose project names and Docker volumes. They do not share database data.
 
 ## Requirements
@@ -130,6 +156,19 @@ docker compose --env-file .env.dev -f compose.dev.yml run --rm migrations upgrad
 ```
 
 Test downgrades only against a disposable database. A downgrade can destroy application data.
+
+## Formatting
+
+The development stack must be running before using these scripts:
+
+```sh
+./scripts/format-backend.sh
+./scripts/format-frontend.sh
+./scripts/format-all.sh
+```
+
+Backend formatting uses `dotnet format` for the API and test projects. Frontend formatting uses
+Prettier and then runs the existing formatting check.
 
 ## Tests
 

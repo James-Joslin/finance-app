@@ -8,6 +8,7 @@ import { useEnrollmentStatus } from './lib/queries';
 
 const GoalsPage = lazy(() => import('./pages/GoalsPage'));
 const InsightsPage = lazy(() => import('./pages/InsightsPage'));
+const HelpPage = lazy(() => import('./pages/HelpPage'));
 const OverviewPage = lazy(() => import('./pages/OverviewPage'));
 const PlanPage = lazy(() => import('./pages/PlanPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
@@ -57,6 +58,7 @@ export default function App() {
                     <Route path="plan" element={<PlanPage />} />
                     <Route path="goals" element={<GoalsPage />} />
                     <Route path="insights" element={<InsightsPage />} />
+                    <Route path="help" element={<HelpPage />} />
                     <Route path="settings" element={<SettingsPage />} />
                     <Route path="*" element={<Navigate to="/" replace />} />
                 </Route>

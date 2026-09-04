@@ -69,10 +69,11 @@ export default function RecurringEditor({
                     transaction.payee ||
                     transaction.memo ||
                     'Recurring transaction',
-                kind:
-                    Number(transaction.amount) < 0 || credit
-                        ? 'bill'
-                        : 'income',
+                kind: transaction.isTransfer
+                    ? 'transfer'
+                    : Number(transaction.amount) < 0 || credit
+                      ? 'bill'
+                      : 'income',
                 accountId: String(transaction.accountId),
                 categoryId: transaction.categoryId
                     ? String(transaction.categoryId)
@@ -187,6 +188,7 @@ export default function RecurringEditor({
                     >
                         <option value="bill">Bill</option>
                         <option value="income">Income / payday</option>
+                        <option value="transfer">Transfer</option>
                     </select>
                 </Field>
                 <Field label="Expected amount">
@@ -233,8 +235,10 @@ export default function RecurringEditor({
                         {categories
                             .filter(
                                 (category) =>
-                                    category.kind !== 'income' ||
-                                    form.kind === 'income'
+                                    category.kind ===
+                                    (form.kind === 'bill'
+                                        ? 'expense'
+                                        : form.kind)
                             )
                             .map((category) => (
                                 <option key={category.id} value={category.id}>

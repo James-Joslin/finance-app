@@ -1182,7 +1182,14 @@ public static class FinovaDataService
             await using var categoryCommand = new NpgsqlCommand("SELECT kind FROM categories WHERE id=@id AND NOT is_archived", connection);
             categoryCommand.Parameters.AddWithValue("id", request.CategoryId.Value);
             var categoryKind = await categoryCommand.ExecuteScalarAsync() as string;
-            if (categoryKind is null || categoryKind == "transfer" || (request.Kind == "income" && categoryKind != "income") || (request.Kind == "bill" && categoryKind != "expense"))
+            var expectedCategoryKind = request.Kind switch
+            {
+                "income" => "income",
+                "bill" => "expense",
+                "transfer" => "transfer",
+                _ => string.Empty,
+            };
+            if (categoryKind is null || categoryKind != expectedCategoryKind)
                 throw new ArgumentException("The selected category does not match the recurring item type.");
         }
         var identity = Clean(request.MatchText) ?? request.Name.Trim();
@@ -1267,10 +1274,9 @@ public static class FinovaDataService
         await reader.DisposeAsync();
         if (existingRecurringId.HasValue)
             return (await GetRecurringItemsAsync(false)).Single(item => item.Id == existingRecurringId.Value);
-        if (isTransfer) throw new ArgumentException("Transfers cannot be marked as household income or bills.");
         if (accountType == "credit" && signedAmount >= 0)
             throw new ArgumentException("A credit-card repayment should be planned against the account it is paid from.");
-        var kind = signedAmount < 0 || accountType == "credit" ? "bill" : "income";
+        var kind = isTransfer ? "transfer" : signedAmount < 0 || accountType == "credit" ? "bill" : "income";
         try
         {
             return await SaveRecurringItemAsync(null, new(
@@ -1372,10 +1378,12 @@ public static class FinovaDataService
                     row_number() OVER (PARTITION BY ro.id ORDER BY abs(t.transaction_date::date - ro.due_date), abs(abs(t.amount) - ro.expected_amount), t.id) occurrence_rank
                 FROM recurring_occurrences ro
                 JOIN recurring_items r ON r.id=ro.recurring_item_id AND r.is_active
-                JOIN transactions t ON t.account_id=r.account_id AND NOT t.is_transfer
+                JOIN transactions t ON t.account_id=r.account_id
                     AND t.transaction_date BETWEEN ro.due_date - r.date_window_days AND ro.due_date + r.date_window_days
                     AND abs(abs(t.amount) - ro.expected_amount) <= r.amount_tolerance
-                    AND ((r.kind='bill' AND t.amount < 0) OR (r.kind='income' AND t.amount > 0))
+                    AND ((r.kind='transfer' AND t.is_transfer)
+                        OR (r.kind='bill' AND NOT t.is_transfer AND t.amount < 0)
+                        OR (r.kind='income' AND NOT t.is_transfer AND t.amount > 0))
                     AND regexp_replace(lower(coalesce(t.payee, t.memo, '')), '[^a-z0-9]+', '', 'g') LIKE
                         '%' || regexp_replace(lower(coalesce(r.match_text, r.name)), '[^a-z0-9]+', '', 'g') || '%'
                 WHERE ro.status='expected' AND r.account_id=@account AND t.transaction_date BETWEEN @start AND @end
@@ -1475,7 +1483,8 @@ public static class FinovaDataService
     {
         var accounts = await GetAccountsAsync();
         var today = await GetHouseholdTodayAsync();
-        var occurrences = await GetRecurringOccurrencesAsync(today.AddDays(-31), today.AddDays(400));
+        var nextMonth = new DateOnly(today.Year, today.Month, 1).AddMonths(1);
+        var occurrences = await GetRecurringOccurrencesAsync(today, nextMonth.AddDays(-1));
         var results = new List<AccountSafetyDto>();
         foreach (var account in accounts)
         {
@@ -1487,10 +1496,8 @@ public static class FinovaDataService
                 continue;
             }
             var accountOccurrences = occurrences.Where(o => o.AccountId == account.Id && o.Status == "expected").ToList();
-            var nextIncome = accountOccurrences.Where(o => o.Kind == "income" && o.DueDate >= today)
-                .OrderBy(o => o.DueDate).Select(o => (DateOnly?)o.DueDate).FirstOrDefault();
-            var horizon = nextIncome?.AddDays(-1) ?? today.AddDays(30);
-            var bills = accountOccurrences.Where(o => o.Kind == "bill" && o.DueDate <= horizon).Sum(o => o.ExpectedAmount);
+            var horizon = nextMonth.AddDays(-1);
+            var bills = accountOccurrences.Where(o => o.Kind == "bill").Sum(o => o.ExpectedAmount);
             var calculated = FinanceMath.CalculateSafety(account.Balance, account.SafeZoneAmount, bills);
             results.Add(new(account.Id, account.Name, account.AccountType, account.Balance, 0, null, null, null, account.SafeZoneAmount, bills, horizon,
                 calculated.SafeToSpend, calculated.Shortfall));
@@ -2322,7 +2329,7 @@ public static class FinovaDataService
     private static void ValidateRecurring(SaveRecurringItemRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Name) || request.Amount <= 0) throw new ArgumentException("Name and positive amount are required.");
-        if (request.Kind is not ("bill" or "income")) throw new ArgumentException("Recurring kind must be bill or income.");
+        if (request.Kind is not ("bill" or "income" or "transfer")) throw new ArgumentException("Recurring kind must be bill, income, or transfer.");
         if (!Frequencies.Contains(request.Frequency)) throw new ArgumentException("Unsupported frequency.");
         if (request.Source is not ("manual" or "suggestion" or "transaction")) throw new ArgumentException("Unsupported recurring source.");
         if (request.AmountTolerance < 0) throw new ArgumentException("Amount tolerance cannot be negative.");
