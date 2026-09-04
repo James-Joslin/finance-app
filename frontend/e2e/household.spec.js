@@ -56,7 +56,7 @@ test.afterEach(async ({ request }) => {
     const groceryBudget = budgets.find(
         (item) => item.categoryName === 'Food & Groceries'
     );
-    if (cleanupState.previousBudget) {
+    if (cleanupState.budgetSnapshotTaken && cleanupState.previousBudget) {
         const response = await request.put('/api/plan/budgets', {
             data: {
                 categoryId: cleanupState.previousBudget.categoryId,
@@ -67,7 +67,7 @@ test.afterEach(async ({ request }) => {
         if (!response.ok()) {
             throw new Error('Could not restore the previous grocery budget.');
         }
-    } else if (groceryBudget) {
+    } else if (cleanupState.budgetSnapshotTaken && groceryBudget) {
         const response = await request.delete(
             '/api/plan/budgets/' + groceryBudget.id
         );
@@ -94,7 +94,11 @@ test.afterEach(async ({ request }) => {
     if (!response.ok()) {
         throw new Error('Could not archive the E2E account.');
     }
-    cleanupState = { accountName: null, previousBudget: null };
+    cleanupState = {
+        accountName: null,
+        previousBudget: null,
+        budgetSnapshotTaken: false,
+    };
 });
 test('completes and reloads a household planning workflow', async ({
     page,
@@ -184,9 +188,13 @@ test('completes and reloads a household planning workflow', async ({
     const budgetsBeforeResponse = await request.get(
         '/api/plan/budgets?includeInactive=true'
     );
+    if (!budgetsBeforeResponse.ok()) {
+        throw new Error('Could not snapshot the grocery budget.');
+    }
     cleanupState.previousBudget = (await budgetsBeforeResponse.json()).find(
         (item) => item.categoryName === 'Food & Groceries'
     );
+    cleanupState.budgetSnapshotTaken = true;
     await budgetDialog.getByLabel('Monthly amount').fill('300');
     await budgetDialog.getByLabel('Roll unused money forward').check();
     await budgetDialog.getByRole('button', { name: 'Save budget' }).click();
