@@ -1655,6 +1655,10 @@ kbd {
     color: var(--mint);
     background: var(--mint-soft);
 }
+.recurring-icon.transfer {
+    color: var(--violet);
+    background: color-mix(in srgb, var(--violet) 12%, var(--surface));
+}
 .suggestions-card {
     background: linear-gradient(135deg, var(--surface), var(--surface-brand));
 }

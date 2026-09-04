@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import {
     Archive,
     ArrowDownToLine,
+    ArrowLeftRight,
     ArrowUpFromLine,
     CalendarClock,
     Check,
@@ -401,6 +402,8 @@ function OccurrenceTimeline({ items, onEdit }) {
                     <span className={'recurring-icon ' + item.kind}>
                         {item.kind === 'income' ? (
                             <ArrowDownToLine />
+                        ) : item.kind === 'transfer' ? (
+                            <ArrowLeftRight />
                         ) : (
                             <ArrowUpFromLine />
                         )}
@@ -416,7 +419,11 @@ function OccurrenceTimeline({ items, onEdit }) {
                         <strong
                             className={item.kind === 'income' ? 'positive' : ''}
                         >
-                            {item.kind === 'income' ? '+' : '−'}
+                            {item.kind === 'income'
+                                ? '+'
+                                : item.kind === 'transfer'
+                                  ? '↔ '
+                                  : '−'}
                             {money(item.expectedAmount)}
                         </strong>
                     </span>
@@ -459,6 +466,8 @@ function RecurringTimeline({ items, onEdit }) {
                     <span className={'recurring-icon ' + item.kind}>
                         {item.kind === 'income' ? (
                             <ArrowDownToLine />
+                        ) : item.kind === 'transfer' ? (
+                            <ArrowLeftRight />
                         ) : (
                             <ArrowUpFromLine />
                         )}
@@ -474,7 +483,11 @@ function RecurringTimeline({ items, onEdit }) {
                         <strong
                             className={item.kind === 'income' ? 'positive' : ''}
                         >
-                            {item.kind === 'income' ? '+' : '−'}
+                            {item.kind === 'income'
+                                ? '+'
+                                : item.kind === 'transfer'
+                                  ? '↔ '
+                                  : '−'}
                             {money(item.amount)}
                         </strong>
                     </span>
@@ -538,6 +551,8 @@ function Suggestions({ items }) {
                         <span className={'recurring-icon ' + item.kind}>
                             {item.kind === 'income' ? (
                                 <ArrowDownToLine />
+                            ) : item.kind === 'transfer' ? (
+                                <ArrowLeftRight />
                             ) : (
                                 <ArrowUpFromLine />
                             )}

@@ -356,7 +356,7 @@ public static class PortabilityService
             "accounts" => new Dictionary<string, string[]>(StringComparer.Ordinal) { ["account_type"] = ["current", "savings", "credit", "cash", "investment"] },
             "transaction_rules" => new Dictionary<string, string[]>(StringComparer.Ordinal) { ["direction"] = ["in", "out", "any"] },
             "savings_goals" => new Dictionary<string, string[]>(StringComparer.Ordinal) { ["status"] = ["active", "completed", "archived"] },
-            "recurring_items" => new Dictionary<string, string[]>(StringComparer.Ordinal) { ["kind"] = ["bill", "income"], ["frequency"] = ["weekly", "fortnightly", "monthly", "quarterly", "yearly"] },
+            "recurring_items" => new Dictionary<string, string[]>(StringComparer.Ordinal) { ["kind"] = ["bill", "income", "transfer"], ["frequency"] = ["weekly", "fortnightly", "monthly", "quarterly", "yearly"] },
             "recurring_occurrences" => new Dictionary<string, string[]>(StringComparer.Ordinal) { ["status"] = ["expected", "matched", "paid", "skipped"] },
             "transaction_import_batches" => new Dictionary<string, string[]>(StringComparer.Ordinal) { ["status"] = ["preview", "completed", "undone"] },
             "transaction_import_rows" => new Dictionary<string, string[]>(StringComparer.Ordinal) { ["outcome"] = ["ready", "imported", "skipped", "rejected", "undone"] },
