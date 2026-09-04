@@ -1218,7 +1218,15 @@ function RuleEditor({ open, rule, categories, onClose, save }) {
     const [form, setForm] = useState(blank);
     useEffect(() => {
         setForm(
-            rule ? { ...rule, categoryId: String(rule.categoryId) } : blank
+            rule
+                ? {
+                      matchText: rule.referenceText,
+                      direction: rule.direction,
+                      categoryId: String(rule.categoryId),
+                      priority: rule.priority,
+                      isActive: rule.isActive,
+                  }
+                : blank
         );
     }, [rule, open, blank]);
     const submit = async (event) => {
