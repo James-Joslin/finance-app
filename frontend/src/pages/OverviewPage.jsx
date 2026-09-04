@@ -21,17 +21,34 @@ import {
 import { GoalVisual } from '../components/GoalVisual';
 import { Card, PageState, Pill, Progress } from '../components/ui';
 import { useTheme } from '../contexts/ThemeContext';
-import { money, percent, relativeDate, shortDate } from '../lib/format';
-import { useDashboard, useInsights } from '../lib/queries';
+import {
+    money,
+    percent,
+    relativeDate,
+    shortDate,
+    todayIso,
+} from '../lib/format';
+import { useDashboard, useInsights, useOccurrences } from '../lib/queries';
 import { staticAssetUrl } from '../lib/staticAssets';
-import { overviewTrendRange } from '../utils/trendRange';
+import { currentMonthRange, overviewTrendRange } from '../utils/trendRange';
 
 export default function OverviewPage() {
     const dashboard = useDashboard();
     const { resolved } = useTheme();
     const trendRange = overviewTrendRange(dashboard.data?.recentTransactions);
+    const monthRange = currentMonthRange();
     const insights = useInsights(trendRange);
-    const pageQueries = [dashboard, insights];
+    const monthInsights = useInsights(monthRange);
+    const occurrences = useOccurrences();
+    const upcomingExpenditures = (occurrences.data || [])
+        .filter(
+            (item) =>
+                item.status === 'expected' &&
+                item.kind === 'bill' &&
+                item.dueDate >= todayIso()
+        )
+        .slice(0, 4);
+    const pageQueries = [dashboard, insights, monthInsights, occurrences];
 
     return (
         <PageState
@@ -60,9 +77,10 @@ export default function OverviewPage() {
                 />
                 <PriorityGoalCard goal={dashboard.data?.priorityGoal} />
                 <SnapshotCard
-                    data={insights.data}
+                    data={monthInsights.data}
                     warnings={dashboard.data?.budgetWarnings || []}
                 />
+                <UpcomingExpenditureCard items={upcomingExpenditures} />
             </div>
         </PageState>
     );
@@ -387,6 +405,47 @@ function PriorityGoalCard({ goal }) {
                         </span>
                     </div>
                 </>
+            )}
+        </Card>
+    );
+}
+
+function UpcomingExpenditureCard({ items }) {
+    return (
+        <Card className="upcoming-expenditure-card">
+            <div className="card-heading">
+                <span className="eyebrow">
+                    <CalendarDays /> Coming up
+                </span>
+                <Link to="/plan">
+                    View plan <ArrowRight />
+                </Link>
+            </div>
+            {items.length === 0 ? (
+                <p className="upcoming-empty">
+                    No expected expenditure coming up.
+                </p>
+            ) : (
+                <div className="upcoming-expenditure-grid">
+                    {items.map((item) => (
+                        <article
+                            className="upcoming-expenditure-item"
+                            key={item.id}
+                        >
+                            <span className="upcoming-expenditure-date">
+                                <strong>{shortDate(item.dueDate)}</strong>
+                                <small>{relativeDate(item.dueDate)}</small>
+                            </span>
+                            <span>
+                                <strong>{item.itemName}</strong>
+                                <small>{item.accountName}</small>
+                            </span>
+                            <strong className="upcoming-expenditure-amount">
+                                −{money(item.expectedAmount)}
+                            </strong>
+                        </article>
+                    ))}
+                </div>
             )}
         </Card>
     );

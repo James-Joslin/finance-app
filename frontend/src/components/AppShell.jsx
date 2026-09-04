@@ -48,6 +48,10 @@ const titles = {
     '/plan': ['Plan', 'Protect today and prepare for what is next.'],
     '/goals': ['Savings goals', 'Turn plans into visible progress.'],
     '/insights': ['Insights', 'Understand the patterns behind your money.'],
+    '/help': [
+        'Help & support',
+        'Learn how Finova keeps your household money clear.',
+    ],
     '/settings': ['Settings & accounts', 'Shape Finova around your household.'],
 };
 
@@ -106,14 +110,12 @@ export default function AppShell() {
                         icon={Settings}
                         onClick={() => setMobileMenu(false)}
                     />
-                    <a
-                        href="https://github.com/"
-                        target="_blank"
-                        rel="noreferrer"
-                    >
-                        <CircleHelp />
-                        <span>Help & support</span>
-                    </a>
+                    <NavItem
+                        to="/help"
+                        label="Help & support"
+                        icon={CircleHelp}
+                        onClick={() => setMobileMenu(false)}
+                    />
                 </nav>
                 <div className="household-profile">
                     <span className="avatar">{initials}</span>

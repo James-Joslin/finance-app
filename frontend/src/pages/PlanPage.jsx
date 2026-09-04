@@ -123,8 +123,8 @@ export default function PlanPage() {
                         <span className="eyebrow">Safe zone</span>
                         <h2>Money with breathing room</h2>
                         <p>
-                            Each account keeps its floor and near-term
-                            commitments protected.
+                            Each account keeps its floor and this month's expected bills
+                            protected.
                         </p>
                     </div>
                 </section>

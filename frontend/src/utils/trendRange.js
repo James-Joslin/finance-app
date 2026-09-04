@@ -5,6 +5,11 @@ const isoDate = (value) => {
     return Number.isNaN(parsed.getTime()) ? null : value;
 };
 
+export function currentMonthRange(now = new Date()) {
+    const today = now.toISOString().slice(0, 10);
+    return { startDate: today.slice(0, 7) + '-01', endDate: today };
+}
+
 export function overviewTrendRange(transactions = [], now = new Date()) {
     const today = now.toISOString().slice(0, 10);
     const latestActualDate = transactions

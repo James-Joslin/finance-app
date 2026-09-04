@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { overviewTrendRange } from './trendRange';
+import { currentMonthRange, overviewTrendRange } from './trendRange';
 
 describe('overviewTrendRange', () => {
+    it('uses only the current calendar month for the month snapshot', () => {
+        expect(currentMonthRange(new Date('2026-09-04T12:00:00Z'))).toEqual({
+            startDate: '2026-09-01',
+            endDate: '2026-09-04',
+        });
+    });
+
     it('anchors the chart to the latest actual transaction date', () => {
         expect(
             overviewTrendRange(

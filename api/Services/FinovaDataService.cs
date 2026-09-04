@@ -1475,7 +1475,8 @@ public static class FinovaDataService
     {
         var accounts = await GetAccountsAsync();
         var today = await GetHouseholdTodayAsync();
-        var occurrences = await GetRecurringOccurrencesAsync(today.AddDays(-31), today.AddDays(400));
+        var nextMonth = new DateOnly(today.Year, today.Month, 1).AddMonths(1);
+        var occurrences = await GetRecurringOccurrencesAsync(today, nextMonth.AddDays(-1));
         var results = new List<AccountSafetyDto>();
         foreach (var account in accounts)
         {
@@ -1487,10 +1488,8 @@ public static class FinovaDataService
                 continue;
             }
             var accountOccurrences = occurrences.Where(o => o.AccountId == account.Id && o.Status == "expected").ToList();
-            var nextIncome = accountOccurrences.Where(o => o.Kind == "income" && o.DueDate >= today)
-                .OrderBy(o => o.DueDate).Select(o => (DateOnly?)o.DueDate).FirstOrDefault();
-            var horizon = nextIncome?.AddDays(-1) ?? today.AddDays(30);
-            var bills = accountOccurrences.Where(o => o.Kind == "bill" && o.DueDate <= horizon).Sum(o => o.ExpectedAmount);
+            var horizon = nextMonth.AddDays(-1);
+            var bills = accountOccurrences.Where(o => o.Kind == "bill").Sum(o => o.ExpectedAmount);
             var calculated = FinanceMath.CalculateSafety(account.Balance, account.SafeZoneAmount, bills);
             results.Add(new(account.Id, account.Name, account.AccountType, account.Balance, 0, null, null, null, account.SafeZoneAmount, bills, horizon,
                 calculated.SafeToSpend, calculated.Shortfall));
