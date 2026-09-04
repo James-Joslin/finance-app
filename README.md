@@ -157,6 +157,19 @@ docker compose --env-file .env.dev -f compose.dev.yml run --rm migrations upgrad
 
 Test downgrades only against a disposable database. A downgrade can destroy application data.
 
+## Formatting
+
+The development stack must be running before using these scripts:
+
+```sh
+./scripts/format-backend.sh
+./scripts/format-frontend.sh
+./scripts/format-all.sh
+```
+
+Backend formatting uses `dotnet format` for the API and test projects. Frontend formatting uses
+Prettier and then runs the existing formatting check.
+
 ## Tests
 
 Run the complete local CI-equivalent suite through the development containers:

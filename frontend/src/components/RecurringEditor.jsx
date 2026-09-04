@@ -69,12 +69,11 @@ export default function RecurringEditor({
                     transaction.payee ||
                     transaction.memo ||
                     'Recurring transaction',
-                kind:
-                    transaction.isTransfer
-                        ? 'transfer'
-                        : Number(transaction.amount) < 0 || credit
-                          ? 'bill'
-                          : 'income',
+                kind: transaction.isTransfer
+                    ? 'transfer'
+                    : Number(transaction.amount) < 0 || credit
+                      ? 'bill'
+                      : 'income',
                 accountId: String(transaction.accountId),
                 categoryId: transaction.categoryId
                     ? String(transaction.categoryId)
