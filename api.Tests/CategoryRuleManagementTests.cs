@@ -7,6 +7,7 @@ using Xunit;
 
 namespace financesApi.Tests;
 
+[Collection("Finova database integration")]
 public sealed class CategoryRuleManagementTests : IAsyncLifetime
 {
     private readonly WebApplicationFactory<Program> factory = new();
