@@ -564,12 +564,26 @@ function TransactionTable({
                             <strong>
                                 {item.payee || item.memo || 'Transaction'}
                             </strong>
-                            <em>
-                                {item.categoryName} · {item.accountName}
-                                {item.transactionTypeCode
-                                    ? ` · ${item.transactionTypeCode}`
-                                    : ''}
-                            </em>
+                            <span className="mobile-transaction-meta">
+                                <span
+                                    className={
+                                        'category-badge mobile-category-tag category-' +
+                                        (categories.find(
+                                            (category) =>
+                                                category.id === item.categoryId
+                                        )?.colorKey || 'slate')
+                                    }
+                                    title={item.categoryName}
+                                >
+                                    {item.categoryName}
+                                </span>
+                                <em>
+                                    {item.accountName}
+                                    {item.transactionTypeCode
+                                        ? ` · ${item.transactionTypeCode}`
+                                        : ''}
+                                </em>
+                            </span>
                         </span>
                         <span className="mobile-transaction-amount">
                             <strong
