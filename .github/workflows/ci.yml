@@ -19,6 +19,27 @@ jobs:
     name: Backend tests
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      POSTGRES_HOST: 127.0.0.1
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: finova_ci
+      POSTGRES_USER: finova_ci
+      POSTGRES_PASSWORD: finova_ci_password
+      POSTGRES_SSL_MODE: Disable
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: finova_ci
+          POSTGRES_USER: finova_ci
+          POSTGRES_PASSWORD: finova_ci_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finova_ci -d finova_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -28,6 +49,17 @@ jobs:
           dotnet-version: 8.0.x
       - name: Restore dependencies
         run: dotnet restore api.Tests/financesApi.Tests.csproj
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: migrations/requirements.txt
+      - name: Install migration dependencies
+        run: python -m pip install --requirement migrations/requirements.txt
+      - name: Apply database migrations
+        working-directory: migrations
+        run: alembic upgrade head
       - name: Verify .NET formatting
         run: |
           dotnet format api/financesApi.csproj --no-restore --verify-no-changes

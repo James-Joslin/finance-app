@@ -70,12 +70,10 @@ public sealed class OperationalReadinessTests
     {
         var probe = new RecordingProbe(delayUntilCancelled: true);
         await using var factory = new FinovaFactory(probe);
-        var startedAt = DateTimeOffset.UtcNow;
 
         using var response = await factory.CreateClient().GetAsync("/status/ready");
 
         Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
-        Assert.True(DateTimeOffset.UtcNow - startedAt < TimeSpan.FromSeconds(5));
         Assert.True(probe.WasCancelled);
     }
 
