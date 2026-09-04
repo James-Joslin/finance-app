@@ -2980,7 +2980,7 @@ kbd {
         height: 68px;
         padding: 0.35rem 0.35rem calc(0.35rem + env(safe-area-inset-bottom));
         display: grid;
-        grid-template-columns: repeat(5, 1fr);
+        grid-template-columns: repeat(6, minmax(0, 1fr));
         background: color-mix(in srgb, var(--surface) 94%, transparent);
         border-top: 1px solid var(--border);
         backdrop-filter: blur(16px);
@@ -2995,6 +2995,7 @@ kbd {
         color: var(--text-muted);
         font-size: 0.48rem;
         font-weight: 700;
+        white-space: nowrap;
         border-radius: 8px;
     }
     .bottom-nav a.active {

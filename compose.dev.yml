@@ -138,6 +138,17 @@ services:
       start_period: 20s
     restart: unless-stopped
 
+  e2e:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.e2e
+    environment:
+      E2E_BASE_URL: http://frontend:5173
+    depends_on:
+      frontend:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   postgres_dev_data:
   azurite_dev_data:

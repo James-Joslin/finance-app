@@ -12,6 +12,8 @@
 *.ofx
 *.qif
 *.csv
+!api.Tests/Fixtures/Imports/*.ofx
+!api.Tests/Fixtures/Imports/*.qif
 backups/
 statements/
 exports/

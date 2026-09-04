@@ -145,6 +145,14 @@ database, uploads its dump to Azurite, restores it under a new name, validates i
 proves overwrite refusal, and removes all test data. CodeQL remains GitHub-only.
 
 Each `scripts/check-*.sh` entry point can also be run independently. Set `FINOVA_ENV_FILE` to use an environment file other than `.env.dev` or `.env.dev.example`.
+Run the disposable PostgreSQL API integration tests and Playwright household workflow:
+
+```sh
+./scripts/check-integration.sh
+```
+
+The runner creates a uniquely named Compose project and database, runs the browser workflow before the
+serial database tests on clean state, and removes its containers and volumes on exit.
 
 Run backend finance-calculation tests in the same .NET toolchain used by the API:
 

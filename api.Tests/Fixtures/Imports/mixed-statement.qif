@@ -1,0 +1,15 @@
+!Type:Bank
+D01/08/2026
+T-25.50
+PMarket
+LFood & Groceries
+^
+D02/08/2026
+T120.00
+PSalary
+LIncome
+^
+D03/08/2026
+Tnot-money
+PBroken import row
+^

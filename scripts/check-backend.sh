@@ -37,11 +37,6 @@ docker exec --workdir /repo "$api_container" \
     -p:RunAnalyzers=true \
     -p:EnableNETAnalyzers=true
 
-printf '\n==> Running backend tests\n'
+printf '\n==> Running backend integration and E2E tests\n'
 
-docker exec --workdir /repo "$api_container" \
-    dotnet test api.Tests/financesApi.Tests.csproj \
-    --configuration Release \
-    --no-restore \
-    --no-build \
-    --verbosity normal
+"$SCRIPT_DIR/check-integration.sh"
