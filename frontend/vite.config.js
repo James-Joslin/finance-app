@@ -7,9 +7,11 @@ export default defineConfig({
     plugins: [react()],
     test: {
         environment: 'jsdom',
+        exclude: ['e2e/**', '**/node_modules/**'],
         setupFiles: './src/testSetup.js',
     },
     server: {
+        allowedHosts: ['frontend'],
         host: '0.0.0.0',
         port: 5173,
         proxy: {
