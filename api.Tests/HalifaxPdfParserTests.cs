@@ -98,6 +98,26 @@ public sealed class HalifaxPdfParserTests
         Assert.Equal(20m, transactions[1].Amount);
     }
 
+    [Fact]
+    public void ExcludesCloselySpacedFooterFromFinalDescription()
+    {
+        var builder = new PdfDocumentBuilder();
+        var font = builder.AddStandard14Font(Standard14Font.Helvetica);
+        var page = builder.AddPage(PageSize.A4);
+        AddHeader(page, font);
+        AddRow(page, font, 700, "Date", "Description", "Type", "Money In (£)", "Money Out (£)", "Balance (£)");
+        AddRow(page, font, 690, "01 Sep 26.", "T L HOLMES", "DEB", "", "12.34", "100.00");
+        page.AddText("(Continued on next page)", 8, new PdfPoint(50, 682.5), font);
+        page.AddText("If any of the information on this page is incorrect, please contact us on 0345 720 3040",
+            8, new PdfPoint(50, 670), font);
+
+        using var stream = new MemoryStream(builder.Build());
+        var transaction = Assert.Single(FinancialFileParserService.Parse(stream, "statement.pdf"));
+
+        Assert.Equal("T L HOLMES", transaction.Payee);
+        Assert.Equal(-12.34m, transaction.Amount);
+    }
+
     private static byte[] BuildStatement()
     {
         var builder = new PdfDocumentBuilder();

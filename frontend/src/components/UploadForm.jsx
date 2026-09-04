@@ -11,6 +11,13 @@ export default function UploadForm() {
     const [isDragOver, setIsDragOver] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
 
+    const isSupportedFile = (candidate) => {
+        const name = candidate?.name?.toLowerCase() || '';
+        return ['.qif', '.ofx', '.pdf'].some((extension) =>
+            name.endsWith(extension)
+        );
+    };
+
     // Remove the old useEffect and accounts state - we're getting it from context now
 
     const handleSubmit = async (e) => {
@@ -70,30 +77,22 @@ export default function UploadForm() {
         setIsDragOver(false);
 
         const droppedFile = e.dataTransfer.files[0];
-        if (
-            droppedFile &&
-            (droppedFile.name.endsWith('.qif') ||
-                droppedFile.name.endsWith('.ofx'))
-        ) {
+        if (droppedFile && isSupportedFile(droppedFile)) {
             setFile(droppedFile);
             setStatus('');
         } else if (droppedFile) {
-            setStatus('Please select a QIF or OFX file');
+            setStatus('Please select a QIF, OFX, or Halifax PDF file');
         }
     };
 
     const handleFileSelect = (e) => {
         const selectedFile = e.target.files[0];
-        if (
-            selectedFile &&
-            (selectedFile.name.endsWith('.qif') ||
-                selectedFile.name.endsWith('.ofx'))
-        ) {
+        if (selectedFile && isSupportedFile(selectedFile)) {
             setFile(selectedFile);
             setStatus('');
         } else if (selectedFile) {
             e.target.value = '';
-            setStatus('Please select a QIF or OFX file');
+            setStatus('Please select a QIF, OFX, or Halifax PDF file');
         }
     };
 
@@ -171,7 +170,7 @@ export default function UploadForm() {
                         <input
                             type="file"
                             onChange={handleFileSelect}
-                            accept=".ofx, .qif"
+                            accept=".ofx, .qif, .pdf, application/pdf"
                             className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                             disabled={isUploading}
                         />
@@ -190,7 +189,7 @@ export default function UploadForm() {
                                             : 'Choose file or drag and drop'}
                                     </p>
                                     <p className="text-sm text-gray-400">
-                                        OFX and QIF files only
+                                        OFX, QIF, and Halifax PDF files only
                                     </p>
                                 </>
                             )}

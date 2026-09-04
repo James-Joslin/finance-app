@@ -49,6 +49,7 @@ public static partial class HalifaxPdfParser
             throw new InvalidDataException($"PDF statements are limited to {MaximumPages} pages.");
 
         var statementRows = new List<StatementRow>();
+        var maskedLayoutDiagnostics = new List<string>();
         var isHalifax = false;
         var readableWords = 0;
         foreach (var page in document.GetPages())
@@ -59,6 +60,7 @@ public static partial class HalifaxPdfParser
             isHalifax |= pageText.Contains("HALIFAX", StringComparison.OrdinalIgnoreCase)
                 || pageText.Contains("Bank of Scotland", StringComparison.OrdinalIgnoreCase);
             var pageRows = ExtractRows(page.Number, page.Width, words).ToList();
+            maskedLayoutDiagnostics.AddRange(DescribeMaskedTransactionLayout(page.Number, words));
             statementRows.AddRange(pageRows);
         }
 
@@ -70,6 +72,8 @@ public static partial class HalifaxPdfParser
         var parsedRows = ParseStatementRowResults(statementRows);
         if (parsedRows.Count == 0)
         {
+            Console.WriteLine("Halifax PDF parsing failed; token shapes and coordinates follow.");
+            foreach (var diagnostic in maskedLayoutDiagnostics) Console.WriteLine(diagnostic);
             throw new InvalidDataException(
                 $"The Halifax PDF was readable, but no transaction rows were recognised across {document.NumberOfPages} page(s). " +
                 "Check that this is a current-account statement rather than a statement summary or scanned document.");
@@ -87,14 +91,13 @@ public static partial class HalifaxPdfParser
 
     private static IReadOnlyList<ParsedFinancialRow> ParseStatementRowResults(IEnumerable<StatementRow> rows)
     {
-        var results = new List<ParsedFinancialRow>();
-        var ordinal = 0;
+        var pendingTransactions = new List<PendingTransaction>();
         PendingTransaction? pending = null;
         foreach (var row in rows)
         {
             if (TryParseDate(row.Date, out var date))
             {
-                if (pending is not null) results.Add(Finalise(pending, ++ordinal));
+                if (pending is not null) pendingTransactions.Add(pending);
                 pending = new(date, Clean(row.Description), CleanCode(row.Type), row.MoneyIn, row.MoneyOut, row.Balance, row.Page);
                 continue;
             }
@@ -107,8 +110,13 @@ public static partial class HalifaxPdfParser
             pending.MoneyOut ??= row.MoneyOut;
             pending.Balance ??= row.Balance;
         }
-        if (pending is not null) results.Add(Finalise(pending, ++ordinal));
-        return results;
+        if (pending is not null) pendingTransactions.Add(pending);
+
+        return pendingTransactions
+            .OrderBy(transaction => transaction.Date)
+            .ThenBy(transaction => transaction.Page)
+            .Select((transaction, index) => Finalise(transaction, index + 1))
+            .ToList();
     }
 
     private static IEnumerable<StatementRow> ExtractRows(int pageNumber, double pageWidth, IReadOnlyList<Word> words)
@@ -118,7 +126,7 @@ public static partial class HalifaxPdfParser
         var transactionHeading = lines.FirstOrDefault(line =>
             NormaliseLabel(line.Text).Contains("yourtransactions", StringComparison.Ordinal));
         var tableTop = header?.Y ?? transactionHeading?.Y;
-        var layout = BuildColumnLayout(lines, header, pageWidth);
+        var layout = BuildColumnLayout(lines, header, transactionHeading, pageWidth);
 
         if (header is not null && layout.Source == "header-derived")
         {
@@ -159,19 +167,68 @@ public static partial class HalifaxPdfParser
     {
         var headerBottom = lines.Where(line => Math.Abs(line.Y - header.Y) <= 16 && IsColumnHeader(line.Text))
             .Select(line => line.Y).DefaultIfEmpty(header.Y).Min();
-        var footer = lines.FirstOrDefault(line => line.Y < header.Y && IsFooter(line.Text));
+        // The final transaction can sit only 7.5 points above Halifax's
+        // "Continued on next page" footer. The normal 8-point line grouping
+        // merges those two lines, so use a tighter grouping for footer bounds.
+        var footer = GroupIntoLines(words, 5)
+            .FirstOrDefault(line => line.Y < header.Y && IsFooter(line.Text));
         var bottom = footer?.Y ?? double.NegativeInfinity;
-        var repeatedHeaderWords = lines.Where(line => IsColumnHeader(line.Text))
-            .SelectMany(line => line.Words).ToHashSet();
         var tableWords = words.Where(word =>
-                Baseline(word) < headerBottom - 1 && Baseline(word) > bottom + 1
-                && !repeatedHeaderWords.Contains(word))
+                Baseline(word) < headerBottom - 1 && Baseline(word) > bottom + 1)
             .ToList();
 
-        var dateAnchors = GroupIntoLines(tableWords.Where(word => layout.ColumnFor(word.BoundingBox.Left) == 0).ToList(), 4)
-            .Select(line => new { Line = line, Parsed = TryParseDate(line.Text, out var date), Date = date })
+        // Some Halifax PDFs print the six column headings again before every
+        // transaction. In that layout the headings are the most reliable row
+        // boundaries: read the cells beneath one heading until the next one.
+        var headerBands = lines
+            .Where(line => line.Y <= header.Y + 1 && line.Y > bottom && IsCompleteColumnHeader(line.Text))
+            .OrderByDescending(line => line.Y)
+            .ToList();
+        Console.WriteLine($"Halifax header matrix p{pageNumber}: completeBands={headerBands.Count}, tableWords={tableWords.Count}, layout={layout.Source}");
+        if (headerBands.Count > 1)
+        {
+            for (var index = 0; index < headerBands.Count; index++)
+            {
+                var band = headerBands[index];
+                var rowTop = band.Words.Min(Baseline) - 1;
+                var rowBottom = index + 1 < headerBands.Count
+                    ? headerBands[index + 1].Words.Max(Baseline) + 1
+                    : footer is null ? bottom : bottom + 1;
+                var rowWords = words.Where(word => Baseline(word) < rowTop && Baseline(word) >= rowBottom).ToList();
+                if (rowWords.Count == 0) continue;
+
+                var dateWords = rowWords
+                    .Where(word => layout.ColumnFor(word.BoundingBox.Left) == 0)
+                    .OrderByDescending(Baseline)
+                    .ThenBy(word => word.BoundingBox.Left)
+                    .ToList();
+                var foundDate = TryFindDate(dateWords, out _, out var dateText);
+                Console.WriteLine($"Halifax header block p{pageNumber}/{index}: rowWords={rowWords.Count}, dateWords={dateWords.Count}, foundDate={foundDate}, dateCodes={DateTokenCodes(dateWords)}");
+                if (!foundDate) continue;
+
+                var cells = BuildMatrixCells(rowWords, layout, rowTop, rowBottom);
+                yield return BuildStatementRow(pageNumber, dateText, cells);
+            }
+            yield break;
+        }
+
+        // Do not use the x-coordinate to find dates. A few Halifax PDFs
+        // shift the extracted text columns, which previously meant the matrix
+        // had no row anchors at all. Find date-bearing lines across the whole
+        // transaction area, then use the column layout for the cell contents.
+        var dateAnchors = GroupIntoLines(tableWords, 4)
+            .Select(line =>
+            {
+                var orderedWords = line.Words
+                    .Where(word => !string.IsNullOrWhiteSpace(word.Text))
+                    .OrderBy(word => word.BoundingBox.Left)
+                    .ToList();
+                var parsed = TryFindDate(orderedWords, out var date, out var dateText);
+
+                return new { Line = line, DateText = dateText, Parsed = parsed, Date = date };
+            })
             .Where(item => item.Parsed)
-            .Select(item => new DateAnchor(item.Date, item.Line.Text, item.Line.Y))
+            .Select(item => new DateAnchor(item.Date, item.DateText, item.Line.Y))
             .OrderByDescending(item => item.Y)
             .ToList();
 
@@ -218,13 +275,25 @@ public static partial class HalifaxPdfParser
         new(pageNumber, date, cells[1].ToString(), cells[2].ToString(),
             ParseMoney(cells[3].ToString()), ParseMoney(cells[4].ToString()), ParseMoney(cells[5].ToString()));
 
-    private static ColumnLayout BuildColumnLayout(IReadOnlyList<ExtractedLine> lines, ExtractedLine? header, double pageWidth)
+    private static ColumnLayout BuildColumnLayout(IReadOnlyList<ExtractedLine> lines, ExtractedLine? header, ExtractedLine? transactionHeading, double pageWidth)
     {
         var fallback = new ColumnLayout([pageWidth * .18, pageWidth * .44, pageWidth * .53, pageWidth * .68, pageWidth * .82], [], "fallback");
         if (header is null) return fallback;
 
-        var words = lines.Where(line => Math.Abs(line.Y - header.Y) <= 16)
-            .SelectMany(line => line.Words).OrderBy(word => word.BoundingBox.Left).ToList();
+        // Halifax renders some statements with each column label on its own
+        // extracted line. Inspect the complete transaction-header block so
+        // those labels can still provide reliable column anchors.
+        var referenceY = transactionHeading?.Y ?? header.Y;
+        var firstDateY = lines
+            .Where(line => line.Y < referenceY && TryFindDate(line.Words.OrderBy(word => word.BoundingBox.Left).ToList(), out _, out _))
+            .Select(line => line.Y)
+            .DefaultIfEmpty(header.Y)
+            .Max();
+        var words = lines
+            .Where(line => line.Y <= referenceY + 16 && line.Y >= firstDateY - 16)
+            .SelectMany(line => line.Words)
+            .OrderBy(word => word.BoundingBox.Left)
+            .ToList();
         double? FindAnchor(string label) => words.FirstOrDefault(word => NormaliseLabel(word.Text) == label)?.BoundingBox.Left;
         var moneyIn = words.FirstOrDefault(word => NormaliseLabel(word.Text).Contains("moneyin", StringComparison.Ordinal))?.BoundingBox.Left;
         var moneyOut = words.FirstOrDefault(word => NormaliseLabel(word.Text).Contains("moneyout", StringComparison.Ordinal))?.BoundingBox.Left;
@@ -238,6 +307,39 @@ public static partial class HalifaxPdfParser
         if (positions.Zip(positions.Skip(1), (left, right) => left < right).Any(inOrder => !inOrder)) return fallback;
 
         return new ColumnLayout(positions.Skip(1).ToArray(), positions, "header-derived");
+    }
+
+    private static bool TryFindDate(IReadOnlyList<Word> words, out DateTime date, out string dateText)
+    {
+        var contentWords = words.Where(word => word.Text.Any(char.IsLetterOrDigit)).ToList();
+        for (var start = 0; start < contentWords.Count; start++)
+        {
+            // PdfPig can return a Halifax date as separate text objects, for
+            // example: "01", "Sep", "26.". Try a few more tokens than the
+            // normal three-word form and also try the compact form produced
+            // when the PDF's spaces are separate glyph objects.
+            for (var count = 1; count <= Math.Min(5, contentWords.Count - start); count++)
+            {
+                var tokens = contentWords.Skip(start).Take(count).Select(word => word.Text).ToList();
+                var candidate = string.Join(" ", tokens);
+
+                if (TryParseDate(candidate, out date))
+                {
+                    dateText = candidate;
+                    return true;
+                }
+
+                var compactCandidate = string.Concat(tokens);
+                if (compactCandidate != candidate && TryParseDate(compactCandidate, out date))
+                {
+                    dateText = candidate;
+                    return true;
+                }
+            }
+        }
+        date = default;
+        dateText = string.Empty;
+        return false;
     }
 
     private static int LeadingDateWordCount(IReadOnlyList<Word> words, out string dateText)
@@ -302,6 +404,9 @@ public static partial class HalifaxPdfParser
         return $"L{letters}D{digits}S{symbols}";
     }
 
+    private static string DateTokenCodes(IEnumerable<Word> words) => string.Join('/', words.Take(6)
+        .Select(word => string.Join('-', word.Text.Select(character => ((int)character).ToString("X4", CultureInfo.InvariantCulture)))));
+
     private static double Baseline(Word word) => word.Letters.Count > 0
         ? word.Letters[0].StartBaseLine.Y
         : word.BoundingBox.Bottom;
@@ -343,11 +448,77 @@ public static partial class HalifaxPdfParser
 
     private static bool TryParseDate(string value, out DateTime date)
     {
-        var readable = Regex.Replace((value ?? string.Empty).Replace('\u00a0', ' ').Replace('\u202f', ' '), @"\s+", " ").Trim();
-        if (DateTime.TryParseExact(readable,
-                ["dd MMM yy", "d MMM yy", "dd MMM yyyy", "d MMM yyyy", "dd/MM/yy", "d/MM/yy",
-                    "dd/MM/yyyy", "d/MM/yyyy", "dd-MM-yy", "d-MM-yy", "dd-MM-yyyy", "d-MM-yyyy"],
-                CultureInfo.GetCultureInfo("en-GB"), DateTimeStyles.None, out date)) return true;
+        var raw = (value ?? string.Empty).Normalize(NormalizationForm.FormKC).Replace('\u00a0', ' ').Replace('\u202f', ' ');
+        var asciiDigits = new StringBuilder(raw.Length);
+        foreach (var character in raw)
+        {
+            if (!char.IsDigit(character))
+            {
+                asciiDigits.Append(character);
+                continue;
+            }
+
+            var digit = char.GetNumericValue(character);
+            asciiDigits.Append(digit is >= 0 and <= 9 && digit == Math.Truncate(digit) ? (int)digit : character);
+        }
+        var readable = Regex.Replace(asciiDigits.ToString(), @"\s+", " ").Trim();
+        var namedDateParts = Regex.Matches(readable, @"[A-Za-z]+|\d+")
+            .Cast<Match>()
+            .Select(match => match.Value)
+            .ToArray();
+        if (namedDateParts.Length >= 3
+            && int.TryParse(namedDateParts[0], NumberStyles.None, CultureInfo.InvariantCulture, out var day)
+            && int.TryParse(namedDateParts[^1], NumberStyles.None, CultureInfo.InvariantCulture, out var year)
+            && day is >= 1 and <= 31)
+        {
+            var month = namedDateParts[1].Length >= 3
+                ? namedDateParts[1][..3].ToLowerInvariant()
+                : namedDateParts[1].ToLowerInvariant();
+            var monthNumber = month switch
+            {
+                "jan" => 1,
+                "feb" => 2,
+                "mar" => 3,
+                "apr" => 4,
+                "may" => 5,
+                "jun" => 6,
+                "jul" => 7,
+                "aug" => 8,
+                "sep" => 9,
+                "oct" => 10,
+                "nov" => 11,
+                "dec" => 12,
+                _ => 0
+            };
+            if (monthNumber > 0)
+            {
+                if (namedDateParts[^1].Length == 2) year += year <= 29 ? 2000 : 1900;
+                try
+                {
+                    date = new DateTime(year, monthNumber, day);
+                    return true;
+                }
+                catch (ArgumentOutOfRangeException)
+                {
+                    // Continue with the normal exact-format parsers below.
+                }
+            }
+        }
+        var candidates = new[]
+        {
+            readable,
+            readable.TrimEnd('.', ',', ';', ':')
+        }.Distinct(StringComparer.Ordinal).Where(candidate => candidate.Length > 0);
+        var formats = new[]
+        {
+            "dd MMM yy", "d MMM yy", "dd MMM yyyy", "d MMM yyyy", "dd MMMM yy", "d MMMM yy", "dd MMMM yyyy", "d MMMM yyyy", "dd/MM/yy", "d/MM/yy",
+            "dd/MM/yyyy", "d/MM/yyyy", "dd-MM-yy", "d-MM-yy", "dd-MM-yyyy", "d-MM-yyyy"
+        };
+        foreach (var candidate in candidates)
+        {
+            if (DateTime.TryParseExact(candidate, formats,
+                    CultureInfo.GetCultureInfo("en-GB"), DateTimeStyles.None, out date)) return true;
+        }
 
         var compact = new string(readable.Where(char.IsLetterOrDigit).ToArray());
         return DateTime.TryParseExact(compact,
@@ -384,10 +555,22 @@ public static partial class HalifaxPdfParser
             || (label.Contains("moneyin", StringComparison.Ordinal) && label.Contains("moneyout", StringComparison.Ordinal))
             || label is "date" or "description" or "type" or "moneyin" or "moneyout" or "balance";
     }
+    private static bool IsCompleteColumnHeader(string text)
+    {
+        var label = NormaliseLabel(text);
+        return label.Contains("date", StringComparison.Ordinal)
+            && label.Contains("description", StringComparison.Ordinal)
+            && label.Contains("type", StringComparison.Ordinal)
+            && label.Contains("balance", StringComparison.Ordinal);
+    }
     private static bool IsFooter(string text) =>
         text.Contains("Continued on next page", StringComparison.OrdinalIgnoreCase)
         || text.StartsWith("Transaction types", StringComparison.OrdinalIgnoreCase)
         || text.StartsWith("If you think something", StringComparison.OrdinalIgnoreCase)
+        || (text.Contains("transactions", StringComparison.OrdinalIgnoreCase)
+            && text.Contains("incorrect", StringComparison.OrdinalIgnoreCase)
+            && text.Contains("contact us", StringComparison.OrdinalIgnoreCase))
+        || text.Contains("please contact us on", StringComparison.OrdinalIgnoreCase)
         || text.Contains("Bank Statement Abbreviations", StringComparison.OrdinalIgnoreCase)
         || text.Contains("Additional Abbreviations", StringComparison.OrdinalIgnoreCase)
         || text.StartsWith("Halifax is a division", StringComparison.OrdinalIgnoreCase);
