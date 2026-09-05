@@ -104,6 +104,11 @@ If a page cannot load, use its retry action and check the service health endpoin
 Install Docker with the Compose plugin. No host installation of .NET, Node.js, Python, Alembic, or PostgreSQL is required.
 
 ## Contributing
+
+Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request and follow the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+For general help, see [SUPPORT.md](SUPPORT.md). Report suspected vulnerabilities privately according to [SECURITY.md](SECURITY.md); never post credentials, financial records, database dumps, backup archives, or private images in a public issue.
+
 ### Development
 
 Create the local environment file:
@@ -374,3 +379,9 @@ curl --fail http://localhost:5173/api/status/ready
 ```
 
 If a published development port is already in use, change its corresponding value in `.env.dev`.
+
+## License
+
+Copyright (C) 2026 James Joslin.
+
+Finova is licensed under the [GNU Affero General Public License version 3](LICENSE). Modified versions made available to users over a network are subject to the source-availability requirements in the license.

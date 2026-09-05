@@ -1,0 +1,75 @@
+name: Bug report
+description: Report a reproducible problem in Finova
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Use synthetic or redacted data only. For vulnerabilities, follow the security policy instead of submitting this public form.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      options:
+        - Frontend
+        - API
+        - Database migrations
+        - Backup or restore
+        - Docker or deployment
+        - CI or release
+        - Documentation
+        - Unsure
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Provide the sha-* image tag, release tag, or commit SHA.
+      placeholder: sha-0123456789abcdef
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Explain what happened and what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest repeatable example using synthetic data.
+      placeholder: |
+        1. Start...
+        2. Open...
+        3. Select...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include host OS, CPU architecture, Docker version, Compose version, and browser where relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitised logs
+      description: Remove credentials, personal information, financial values, filenames, and connection details.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I searched for an existing issue.
+          required: true
+        - label: I removed all credentials and real household or financial data.
+          required: true
+        - label: This is not a privately reportable security vulnerability.
+          required: true
