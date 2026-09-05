@@ -5,6 +5,12 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 
+mode="${1:-all}"
+if [[ "$mode" != "all" && "$mode" != "--e2e-only" ]]; then
+    echo "Usage: $0 [--e2e-only]" >&2
+    exit 2
+fi
+
 if [[ -n "${FINOVA_ENV_FILE:-}" ]]; then
     ENV_FILE="$FINOVA_ENV_FILE"
 elif [[ -f "$REPO_ROOT/.env.dev" ]]; then
@@ -26,7 +32,7 @@ compose_test() {
 cleanup() {
     local exit_code=$?
     set +e
-    compose_test down --volumes --remove-orphans >/dev/null 2>&1
+    compose_test down --volumes --remove-orphans --rmi local >/dev/null 2>&1
     exit "$exit_code"
 }
 trap cleanup EXIT INT TERM
@@ -51,6 +57,9 @@ fi
 
 printf '\n==> Running Playwright household E2E\n'
 compose_test run --rm --no-deps --build e2e
+if [[ "$mode" == "--e2e-only" ]]; then
+    exit 0
+fi
 printf '\n==> Resetting disposable database for API integration tests\n'
 compose_test down --volumes --remove-orphans >/dev/null
 compose_test up --detach --build db migrations api frontend

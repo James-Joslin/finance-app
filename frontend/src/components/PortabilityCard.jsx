@@ -120,7 +120,8 @@ export default function PortabilityCard() {
                     </Field>
                     <p className="form-hint">
                         Current data is replaced only after integrity and
-                        relationship checks pass.
+                        relationship checks pass. Archives must be no larger
+                        than 50 MB.
                     </p>
                     <InlineError>
                         {importArchive.error && apiError(importArchive.error)}

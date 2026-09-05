@@ -9,21 +9,6 @@ namespace financesApi.services
     // Generic Data Service - replaces your DataService
     public static class GenericDataService
     {
-        // Generic read operation
-        public static async Task<DataTable> ExecuteQueryAsync(string queryPath, TransactionQueryRequest? queryParameters = null)
-        {
-            string query = await SqlQueryLoader.GetQueryAsync(queryPath)
-                ?? throw new ArgumentNullException(nameof(query), $"Query '{queryPath}' returned null");
-
-            if (queryParameters != null)
-            {
-                string filter = FilterBuilder.BuildFilter(queryParameters);
-
-                query += filter;
-            }
-
-            return await PostgreSqlQuerier.ExecuteQueryAsync(query);
-        }
 
         public static async Task<DataTable> ExecuteParameterisedQueryAsync(string queryPath, Dictionary<string, object> parameters)
         {

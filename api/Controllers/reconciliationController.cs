@@ -20,7 +20,7 @@ public sealed class ReconciliationController : ControllerBase
     public async Task<ActionResult<StatementSessionDetailDto>> Post(CreateStatementSessionRequest request)
     {
         var session = await StatementReconciliationService.CreateSessionAsync(request);
-        return Created($"/reconciliation/{session.Session.Id}", session);
+        return Created($"/api/reconciliation/{session.Session.Id}", session);
     }
 
     [HttpPatch("{id:int}/transactions/{transactionId:int}/cleared")]

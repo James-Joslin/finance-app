@@ -43,7 +43,7 @@ public sealed class AccountsController : ControllerBase
     public async Task<ActionResult<AccountDto>> Post(CreateAccountRequest request)
     {
         var account = await FinovaDataService.CreateAccountAsync(request);
-        return Created($"/accounts/{account.Id}", account);
+        return Created($"/api/accounts/{account.Id}", account);
     }
 
     [HttpPut("{id:int}")]
@@ -70,7 +70,7 @@ public sealed class CategoriesController : ControllerBase
     public async Task<ActionResult<TransactionRuleDto>> PostRule(SaveTransactionRuleRequest request)
     {
         var rule = await FinovaDataService.SaveTransactionRuleAsync(null, request);
-        return Created($"/categories/rules/{rule.Id}", rule);
+        return Created($"/api/categories/rules/{rule.Id}", rule);
     }
 
     [HttpPut("rules/{id:int}")]
@@ -85,7 +85,7 @@ public sealed class CategoriesController : ControllerBase
     public async Task<ActionResult<CategoryDto>> Post(CreateCategoryRequest request)
     {
         var category = await FinovaDataService.CreateCategoryAsync(request);
-        return Created($"/categories/{category.Id}", category);
+        return Created($"/api/categories/{category.Id}", category);
     }
 
     [HttpPut("{id:int}")]
@@ -109,7 +109,7 @@ public sealed class TransactionsController : ControllerBase
     public async Task<ActionResult<TransactionDetailDto>> Post(SaveManualTransactionRequest request)
     {
         var transaction = await FinovaDataService.CreateManualTransactionAsync(request);
-        return Created($"/transactions/{transaction.Transaction.Id}", transaction);
+        return Created($"/api/transactions/{transaction.Transaction.Id}", transaction);
     }
 
     [HttpGet("{id:int}")]
@@ -170,7 +170,7 @@ public sealed class TransactionsController : ControllerBase
         try
         {
             var item = await FinovaDataService.MarkTransactionRecurringAsync(id, request);
-            return Created($"/plan/recurring/{item.Id}", item);
+            return Created($"/api/plan/recurring/{item.Id}", item);
         }
         catch (KeyNotFoundException)
         {
@@ -260,7 +260,7 @@ public sealed class GoalsController : ControllerBase
     public async Task<ActionResult<GoalDto>> Post(SaveGoalRequest request)
     {
         var goal = await FinovaDataService.SaveGoalAsync(null, request);
-        return Created($"/goals/{goal.Id}", goal);
+        return Created($"/api/goals/{goal.Id}", goal);
     }
 
     [HttpPut("{id:int}")]
@@ -279,7 +279,7 @@ public sealed class GoalsController : ControllerBase
     public async Task<IActionResult> UploadImage([FromForm] IFormFile image)
     {
         var id = await FinovaDataService.SaveGoalImageAsync(image);
-        return Created($"/goals/images/{id}", new { id, url = $"/api/goals/images/{id}" });
+        return Created($"/api/goals/images/{id}", new { id, url = $"/api/goals/images/{id}" });
     }
 
     [HttpGet("images/{id:int}")]
@@ -311,7 +311,7 @@ public sealed class PlanController : ControllerBase
     public async Task<ActionResult<RecurringItemDto>> PostRecurring(SaveRecurringItemRequest request)
     {
         var item = await FinovaDataService.SaveRecurringItemAsync(null, request);
-        return Created($"/plan/recurring/{item.Id}", item);
+        return Created($"/api/plan/recurring/{item.Id}", item);
     }
 
     [HttpPut("recurring/{id:int}")]
