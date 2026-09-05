@@ -33,27 +33,6 @@ namespace financesApi.utilities
             }
         }
 
-        // Generic read method
-        public static async Task<DataTable> ExecuteQueryAsync(string query)
-        {
-            try
-            {
-                using var connection = BuildConnection();
-                await connection.OpenAsync();
-
-                using var command = new NpgsqlCommand(query, connection);
-
-                using var reader = await command.ExecuteReaderAsync();
-                var dataTable = new DataTable();
-                dataTable.Load(reader);
-                return dataTable;
-            }
-            catch
-            {
-                throw;
-            }
-        }
-
         public static async Task<DataTable> ExecuteParameterisedQueryAsync(string query, Dictionary<string, object>? parameters = null)
         {
             try

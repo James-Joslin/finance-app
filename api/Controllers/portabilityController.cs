@@ -23,7 +23,7 @@ public sealed class PortabilityController : ControllerBase
     }
 
     [HttpPost("import")]
-    [RequestSizeLimit(1024L * 1024L * 1024L)]
+    [RequestSizeLimit(PortabilityService.MaxArchiveRequestBytes)]
     public async Task<ActionResult<PortableImportSummary>> Import([FromForm] IFormFile archive)
     {
         if (archive is null || archive.Length == 0)

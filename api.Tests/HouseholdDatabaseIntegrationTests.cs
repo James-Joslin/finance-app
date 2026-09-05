@@ -127,6 +127,8 @@ public sealed class HouseholdDatabaseIntegrationTests : IAsyncLifetime
     {
         var response = await client.PostAsJsonAsync(uri, body);
         response.EnsureSuccessStatusCode();
+        Assert.NotNull(response.Headers.Location);
+        Assert.StartsWith("/api/", response.Headers.Location!.OriginalString);
         return (await response.Content.ReadFromJsonAsync<T>())!;
     }
 

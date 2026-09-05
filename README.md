@@ -47,7 +47,7 @@ guide. The main workflows are:
   and resolve the closing discrepancy before completing a session.
 - Use Settings for household preferences, categories, automatic rules, theme, and portability.
   Finova is designed for a trusted private network, and private goal images are included in the
-  household archive.
+  household archive. Restored archives may be up to 50 MB compressed and 100 MB expanded.
 
 If a page cannot load, use its retry action and check the service health endpoints in the
 [Troubleshooting](#troubleshooting) section. For import problems, confirm the file format and that

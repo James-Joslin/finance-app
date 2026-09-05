@@ -1,9 +1,9 @@
-FROM mcr.microsoft.com/playwright:v1.55.0-noble
+FROM mcr.microsoft.com/playwright:v1.63.0-noble
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
-RUN npm ci && npm install --no-save @playwright/test@1.55.0
+RUN npm ci
 
 COPY . .
 

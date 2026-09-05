@@ -14,6 +14,10 @@ namespace financesApi.services;
 
 public static class PortabilityService
 {
+    public const long MaxArchiveUploadBytes = 50L * 1024L * 1024L;
+    public const long MaxArchiveRequestBytes = MaxArchiveUploadBytes + 1L * 1024L * 1024L;
+    private const long MaxArchiveExpandedBytes = 100L * 1024L * 1024L;
+    private const int MaxArchiveEntries = 10_000;
     private const string Format = "finova-portable";
     private const int Version = 1;
     private const string JsonLinesContentType = "application/x-ndjson";
@@ -159,9 +163,12 @@ public static class PortabilityService
     public static async Task<PortableImportSummary> ImportArchiveAsync(Stream input)
     {
         if (!input.CanRead) throw new ArgumentException("The uploaded archive cannot be read.");
+        if (input.CanSeek && input.Length > MaxArchiveUploadBytes)
+            throw new InvalidDataException("The uploaded archive must be no larger than 50 MB.");
         await using var buffer = new MemoryStream();
-        await input.CopyToAsync(buffer);
-        var parsed = ParseArchive(buffer.ToArray());
+        await CopyToAsync(input, buffer, MaxArchiveUploadBytes);
+        buffer.Position = 0;
+        var parsed = ParseArchive(buffer);
 
         await using var connection = PostgreSqlQuerier.BuildConnection();
         await connection.OpenAsync();
@@ -267,11 +274,19 @@ public static class PortabilityService
         JsonSerializer.Serialize(stream, value, JsonOptions);
     }
 
-    private static ParsedArchive ParseArchive(byte[] bytes)
+    private static ParsedArchive ParseArchive(Stream input)
     {
-        using var source = new MemoryStream(bytes, writable: false);
-        using var archive = new ZipArchive(source, ZipArchiveMode.Read, leaveOpen: false);
+        using var archive = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: true);
         var entries = archive.Entries.ToArray();
+        if (entries.Length > MaxArchiveEntries)
+            throw new InvalidDataException("The archive contains too many entries.");
+        long expandedBytes = 0;
+        foreach (var entry in entries)
+        {
+            if (entry.Length > MaxArchiveExpandedBytes - expandedBytes)
+                throw new InvalidDataException("The expanded archive must be no larger than 100 MB.");
+            expandedBytes += entry.Length;
+        }
         if (entries.Any(entry => entry.FullName.StartsWith("/", StringComparison.Ordinal) || entry.FullName.Contains("..", StringComparison.Ordinal) || entry.FullName.Contains('\\')))
             throw new InvalidDataException("The archive contains an unsafe path.");
         if (entries.GroupBy(entry => entry.FullName, StringComparer.Ordinal).Any(group => group.Count() != 1))
@@ -450,6 +465,21 @@ public static class PortabilityService
         using var output = new MemoryStream();
         stream.CopyTo(output);
         return output.ToArray();
+    }
+
+    private static async Task CopyToAsync(Stream input, Stream output, long maximumBytes)
+    {
+        var buffer = new byte[81920];
+        long copied = 0;
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer);
+            if (read == 0) return;
+            if (read > maximumBytes - copied)
+                throw new InvalidDataException("The uploaded archive must be no larger than 50 MB.");
+            await output.WriteAsync(buffer.AsMemory(0, read));
+            copied += read;
+        }
     }
 
     private static void VerifyEntry(ArchiveEntry expected, byte[] content)
