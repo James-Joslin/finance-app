@@ -101,17 +101,35 @@ Create the production environment file and replace the example password with a l
 
 ```sh
 cp .env.prod.example .env.prod
+chmod 600 .env.prod
 ```
 
-Start the stack:
+Pull the selected release and start the stack:
 
 ```sh
-docker compose --env-file .env.prod -f compose.prod.yml up --build --detach
+docker compose --env-file .env.prod -f compose.prod.yml pull
+docker compose --env-file .env.prod -f compose.prod.yml up --detach
 ```
 
 The application is available at http://localhost:8080 by default. Change `APP_PORT` to publish a different host port.
 
 Only Nginx is published in production. PostgreSQL and the API are reachable solely over the private Compose network. The stack serves HTTP only.
+
+The application images are published for `linux/amd64` and `linux/arm64`. `latest` follows the
+newest successful `main` release and is intended for convenient installs. For a fixed, coordinated
+release, set `FINOVA_IMAGE_TAG` in `.env.prod` to the full `sha-<commit>` tag shown in GHCR, then run
+the same `pull` and `up` commands.
+
+Upgrade to the newest successful release with:
+
+```sh
+docker compose --env-file .env.prod -f compose.prod.yml pull
+docker compose --env-file .env.prod -f compose.prod.yml up --detach
+```
+
+Changing `FINOVA_IMAGE_TAG` to an older commit rolls back the four application containers together,
+but it does not downgrade PostgreSQL. Only roll back to an application version compatible with the
+current schema. Otherwise, use a tested database restore or downgrade procedure.
 
 View status and logs:
 
@@ -130,6 +148,30 @@ Stop production while retaining its database:
 ```sh
 docker compose --env-file .env.prod -f compose.prod.yml down
 ```
+
+### Release automation
+
+Pull requests and pushes to `main` run the complete hosted CI gate. A successful `push` run publishes
+four commit-tagged images using GitHub's short-lived, repository-scoped `GITHUB_TOKEN`; no personal
+access token or repository secret is required. After all four images exist, the publisher moves the
+four convenience `latest` tags to that commit. Commit tags remain the authoritative coordinated
+release references.
+
+After the first publish, the repository owner must make these packages public in each package's
+settings so deployments can pull them anonymously:
+
+- `finance-app-api`
+- `finance-app-frontend`
+- `finance-app-migrations`
+- `finance-app-backup`
+
+GitHub does not allow a public package to be made private again. Keep the packages private until the
+first published images have been inspected.
+
+Configure the `main` branch ruleset to require the uniquely named `CI gate` status. If administrators
+may bypass human approval, keep the CI requirement in a ruleset with no bypass actors and put the
+required-review rule in a second ruleset with repository administrators set to pull-request-only
+bypass.
 
 ## Database migrations
 
@@ -179,7 +221,7 @@ Run the complete local CI-equivalent suite through the development containers:
 ```
 
 The orchestrator builds and starts the development stack, then runs the backend, frontend, migration,
-backup/restore, production-image, and Semgrep checks. The recovery check migrates a disposable source
+backup/restore, production-image, container-pin-policy, and Semgrep checks. The recovery check migrates a disposable source
 database, uploads its dump to Azurite, restores it under a new name, validates its data and revision,
 proves overwrite refusal, and removes all test data. CodeQL remains GitHub-only.
 
@@ -284,7 +326,7 @@ Snapshot or copy the `azurite_prod_data` volume off-host for host-level disaster
 
 ## Environment variables
 
-| Variable | Purpose | Development default |
+| Variable | Purpose | Example/default |
 | --- | --- | --- |
 | `POSTGRES_HOST` | Database hostname used by API and Alembic | `db` |
 | `POSTGRES_PORT` | Database container port | `5432` |
@@ -296,6 +338,8 @@ Snapshot or copy the `azurite_prod_data` volume off-host for host-level disaster
 | `API_PORT` | Development host API port | `5153` |
 | `FRONTEND_PORT` | Development host frontend port | `5173` |
 | `APP_PORT` | Production Nginx host port | `8080` |
+| `FINOVA_IMAGE_PREFIX` | GHCR prefix shared by the four application images | `ghcr.io/james-joslin/finance-app` |
+| `FINOVA_IMAGE_TAG` | Coordinated application release tag | `latest` |
 | `AZURITE_ACCOUNT_NAME` | Private Blob account used by the backup service | `finovadev` |
 | `AZURITE_ACCOUNT_KEY` | Base64 account key shared by Azurite and backup tooling | Development emulator key |
 | `BACKUP_BLOB_CONTAINER` | Blob container that holds database dumps | `database-backups` |

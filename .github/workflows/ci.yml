@@ -156,7 +156,7 @@ jobs:
   production-images:
     name: Production image (${{ matrix.image }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
       DOCKER_BUILD_RECORD_UPLOAD: false
     strategy:
@@ -172,9 +172,14 @@ jobs:
           - image: migrations
             context: ./migrations
             dockerfile: ./migrations/Dockerfile
+          - image: backup
+            context: ./operations
+            dockerfile: ./operations/Dockerfile
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
       - name: Build production image
@@ -182,10 +187,46 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
+          platforms: linux/amd64,linux/arm64
           push: false
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  backup-restore:
+    name: Backup and restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      COMPOSE_PROJECT_NAME: finova-backup-ci-${{ github.run_id }}
+      FINOVA_ENV_FILE: ${{ github.workspace }}/.env.dev.example
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Start disposable database and Blob storage
+        run: >-
+          docker compose --env-file .env.dev.example --file compose.dev.yml
+          up --detach --wait --wait-timeout 60 db azurite
+      - name: Build migration image
+        run: >-
+          docker compose --env-file .env.dev.example --file compose.dev.yml
+          build migrations
+      - name: Run backup and restore integration test
+        run: ./scripts/check-backup-restore.sh
+      - name: Clean up disposable recovery stack
+        if: always()
+        run: >-
+          docker compose --env-file .env.dev.example --file compose.dev.yml
+          down --volumes --remove-orphans --rmi local
+
+  dockerfile-policy:
+    name: Production container pin policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Require pinned production container inputs
+        run: ./scripts/check-container-pins.sh
 
   semgrep:
     name: Semgrep
@@ -224,3 +265,26 @@ jobs:
         uses: github/codeql-action/analyze@fddeee1a7ece751b577e409a89057319e3172939 # v4
         with:
           category: /language:${{ matrix.language }}
+
+  ci-gate:
+    name: CI gate
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - backend-tests
+      - frontend-quality
+      - browser-e2e
+      - migration-round-trip
+      - production-images
+      - backup-restore
+      - dockerfile-policy
+      - semgrep
+      - codeql
+    steps:
+      - name: Verify every required CI job passed
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          jq -e 'all(.[]; .result == "success")' <<< "$RESULTS"
