@@ -115,8 +115,8 @@ The application is available at http://localhost:8080 by default. Change `APP_PO
 
 Only Nginx is published in production. PostgreSQL and the API are reachable solely over the private Compose network. The stack serves HTTP only.
 
-The application images are published for `linux/amd64` and `linux/arm64`. `latest` follows the
-newest successful `main` release and is intended for convenient installs. For a fixed, coordinated
+The application images are published for `linux/amd64` (Intel/AMD hosts). `latest` follows the newest
+successful `main` release and is intended for convenient installs. For a fixed, coordinated
 release, set `FINOVA_IMAGE_TAG` in `.env.prod` to the full `sha-<commit>` tag shown in GHCR, then run
 the same `pull` and `up` commands.
 
