@@ -5,6 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)"
 
+"$SCRIPT_DIR/check-container-pins.sh"
+
 docker build \
     --platform linux/amd64 \
     --file "$REPO_ROOT/api/Dockerfile" \

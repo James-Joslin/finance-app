@@ -2,7 +2,7 @@ name: finance-app-prod
 
 services:
   db:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:18cfe3ef5e6815560c98237d6216d1e5119702fb0f3894c8785dd58b8bbe5d73
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-finances_db}
       POSTGRES_USER: ${POSTGRES_USER:-finances_app}
@@ -18,7 +18,7 @@ services:
     restart: unless-stopped
 
   azurite:
-    image: mcr.microsoft.com/azure-storage/azurite:3.36.0
+    image: mcr.microsoft.com/azure-storage/azurite:3.36.0@sha256:76b8127d608fab8287a14a4bfeb9a5502cdcffb4bf1e86f09f324ebb0e70edba
     environment:
       AZURITE_ACCOUNTS: ${AZURITE_ACCOUNT_NAME:-finovabackups}:${AZURITE_ACCOUNT_KEY:?AZURITE_ACCOUNT_KEY must be set}
     command:
@@ -43,8 +43,7 @@ services:
     restart: unless-stopped
 
   backup:
-    build:
-      context: ./operations
+    image: ${FINOVA_IMAGE_PREFIX:-ghcr.io/james-joslin/finance-app}-backup:${FINOVA_IMAGE_TAG:-latest}
     environment:
       POSTGRES_HOST: ${POSTGRES_HOST:-db}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
@@ -65,8 +64,7 @@ services:
     restart: unless-stopped
 
   migrations:
-    build:
-      context: ./migrations
+    image: ${FINOVA_IMAGE_PREFIX:-ghcr.io/james-joslin/finance-app}-migrations:${FINOVA_IMAGE_TAG:-latest}
     environment:
       POSTGRES_HOST: ${POSTGRES_HOST:-db}
       POSTGRES_PORT: ${POSTGRES_PORT:-5432}
@@ -81,9 +79,7 @@ services:
     restart: "no"
 
   api:
-    build:
-      context: ./api
-      dockerfile: Dockerfile
+    image: ${FINOVA_IMAGE_PREFIX:-ghcr.io/james-joslin/finance-app}-api:${FINOVA_IMAGE_TAG:-latest}
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_HTTP_PORTS: 8080
@@ -107,9 +103,7 @@ services:
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ${FINOVA_IMAGE_PREFIX:-ghcr.io/james-joslin/finance-app}-frontend:${FINOVA_IMAGE_TAG:-latest}
     ports:
       - "${APP_PORT:-8080}:8080"
     depends_on:
