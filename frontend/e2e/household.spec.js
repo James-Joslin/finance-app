@@ -199,10 +199,13 @@ test('completes and reloads a household planning workflow', async ({
     await budgetDialog.getByLabel('Roll unused money forward').check();
     await budgetDialog.getByRole('button', { name: 'Save budget' }).click();
 
+    const groceryBudgetCard = page
+        .locator('section.budget-card')
+        .filter({ hasText: 'Food & Groceries' });
+    await expect(groceryBudgetCard).toBeVisible();
     await expect(
-        page.getByText('Food & Groceries', { exact: true })
+        groceryBudgetCard.getByText('£257.50 left', { exact: true })
     ).toBeVisible();
-    await expect(page.getByText('£257.50 left', { exact: true })).toBeVisible();
 
     await page.reload();
     await expect(page.getByText(accountName, { exact: true })).toBeVisible();
